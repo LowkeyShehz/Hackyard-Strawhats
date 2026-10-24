@@ -1,0 +1,5 @@
+# HTTP bridge only (bridge.py on Render). The models run on Nodus, so no torch here;
+# requirements.txt has the full set for the Nodus functions and FRAUD_LOCAL=1 runs.
+nodus-compute
+fastapi>=0.110
+uvicorn>=0.29

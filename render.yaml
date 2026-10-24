@@ -1,0 +1,188 @@
+# Nirman Mitra on Render (Blueprint). Every service deploys from main once GitHub CI
+# (.github/workflows/ci.yml) passes. Data stays on AWS: DynamoDB, S3 and the AI services
+# (Rekognition, Textract, Polly), reached with the RenderRuntimeUser key from template.yaml.
+#
+# Values marked `sync: false` are secrets: Render asks for them when the Blueprint is first
+# applied, and they are then edited in the dashboard, never here.
+
+envVarGroups:
+  # Non-secret settings shared by the API and the reminder job. Table names match template.yaml.
+  - name: nirman-mitra-backend
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: ENVIRONMENT
+        value: dev
+      - key: AWS_REGION
+        value: ap-south-1
+      - key: WORKERS_TABLE
+        value: NirmanMitra-Workers-dev
+      - key: ATTENDANCE_TABLE
+        value: NirmanMitra-AttendanceLogs-dev
+      - key: SITES_TABLE
+        value: NirmanMitra-Sites-dev
+      - key: CERTIFICATES_TABLE
+        value: NirmanMitra-Certificates-dev
+      - key: DOCUMENTS_TABLE
+        value: NirmanMitra-Documents-dev
+      - key: CONVERSATION_TABLE
+        value: NirmanMitra-ConversationState-dev
+      - key: BEDROCK_CACHE_TABLE
+        value: NirmanMitra-BedrockCache-dev
+      - key: ADMIN_USERS_TABLE
+        value: NirmanMitra-AdminUsers-dev
+      - key: REFRESH_TOKENS_TABLE
+        value: NirmanMitra-RefreshTokens-dev
+      - key: AUDIT_TABLE
+        value: NirmanMitra-AuditLog-dev
+
+services:
+  # ── API: WhatsApp webhook + dashboard/officer/agent/helpline API (src/server.js) ──
+  - type: web
+    name: nirman-mitra-api
+    runtime: node
+    region: singapore
+    plan: starter
+    buildCommand: npm ci --omit=dev
+    startCommand: node src/server.js
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass
+    # Webhook messages are processed after the 200; give in-flight ones time to finish on deploy
+    maxShutdownDelaySeconds: 120
+    buildFilter:
+      paths:
+        - src/**
+        - package.json
+        - package-lock.json
+    envVars:
+      - fromGroup: nirman-mitra-backend
+      - key: BACKGROUND_WEBHOOK
+        value: 'true'
+      - key: CERTIFICATE_THRESHOLD
+        value: '3'
+      - key: REKOGNITION_COLLECTION_ID
+        value: nirman-mitra-workers
+      - key: STT_PROVIDERS
+        value: nodus,elevenlabs,groq
+      - key: ELEVENLABS_TTS_MODEL
+        value: eleven_v3
+      - key: LLM_PROVIDER
+        value: nodus
+      - key: LLM_MODEL
+        value: nodus/gpt-oss-120b
+      # Bucket names end in the AWS account id: copy them from the SAM stack outputs
+      - key: MEDIA_RAW_BUCKET
+        sync: false
+      - key: MEDIA_PROCESSED_BUCKET
+        sync: false
+      - key: CERTIFICATES_BUCKET
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: PORTAL_URL
+        sync: false
+      - key: DEMO_PHONE_NUMBERS
+        sync: false
+      - key: CREDENTIAL_SIGNING_JWK
+        sync: false
+      - key: WHATSAPP_API_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: NODUS_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_VOICE_IDS
+        sync: false
+      # https://nirman-fraud-bridge.onrender.com (or empty to skip the selfie fraud check)
+      - key: FRAUD_SERVICE_URL
+        sync: false
+      - key: FRAUD_SERVICE_TOKEN
+        sync: false
+      - key: GPS_HASH_KEY
+        sync: false
+      - key: AGENT_API_KEY_HASH
+        sync: false
+      - key: HELPLINE_SECRET
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: ADMIN_SEED_SECRET
+        sync: false
+
+  # ── Proactive WhatsApp reminders (was the EventBridge schedule on Lambda) ──
+  - type: cron
+    name: nirman-mitra-reminders
+    runtime: node
+    region: singapore
+    schedule: '*/15 * * * *'
+    buildCommand: npm ci --omit=dev
+    startCommand: node src/jobs/proactiveReminder.js
+    autoDeployTrigger: checksPass
+    buildFilter:
+      paths:
+        - src/**
+        - package.json
+        - package-lock.json
+    envVars:
+      - fromGroup: nirman-mitra-backend
+      - key: WHATSAPP_REMINDER_TEMPLATE_NAME
+        value: daily_checkin_reminder
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: WHATSAPP_API_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+
+  # ── Nodus fraud bridge (nodus/bridge.py); the models run on Nodus, not here ──
+  - type: web
+    name: nirman-fraud-bridge
+    runtime: python
+    region: singapore
+    plan: starter
+    rootDir: nodus
+    buildCommand: pip install -r requirements-bridge.txt
+    startCommand: uvicorn bridge:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      # Same value as the API's FRAUD_SERVICE_TOKEN
+      - key: FRAUD_SERVICE_TOKEN
+        sync: false
+      # Credentials for the Nodus SDK (what `nodus login` stores locally)
+      - key: NODUS_API_KEY
+        sync: false
+
+  # ── Admin dashboard / officer portal (static) ──
+  - type: web
+    name: nirman-mitra-admin
+    runtime: static
+    rootDir: admin-dashboard
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    autoDeployTrigger: checksPass
+    routes:
+      # React Router; real files such as /.well-known/did.json are served as they are
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # https://nirman-mitra-api.onrender.com (read at build time by Vite)
+      - key: VITE_API_URL
+        sync: false

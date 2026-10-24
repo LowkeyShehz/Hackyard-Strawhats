@@ -52,7 +52,7 @@ flowchart LR
     EL[ElevenLabs helpline agent] --> G
     H --> D[(DynamoDB)]
     H --> B[(S3)]
-    O[Officer / Admin browser] --> A[React dashboard<br/>on Amplify]
+    O[Officer / Admin browser] --> A[React dashboard<br/>on Render]
     A --> G
 
 
@@ -63,10 +63,10 @@ flowchart LR
 | Decision | Choice | Why Not Alternative |
 |---|---|---|
 | **Database** | DynamoDB | RDS adds VPC cold starts and fixed costs; DynamoDB scales to zero. |
-| **Compute** | AWS Lambda | EC2/ECS adds idle cost; Lambda auto-scales per webhook request. |
+| **Compute** | Render web service + cron job | One always-on Node process (`src/server.js`) runs the same handlers with no cold starts; the Lambda stack stays deployable as a standby. |
 | **Orchestration** | AWS Step Functions | SQS chaining loses state easily; Step Functions gives visual debugging and parallel branch execution. |
 | **LLM & STT** | Groq (Whisper + Llama/GPT-OSS) | Amazon Transcribe was too slow (~10-20s polling). Groq Whisper transcribes in ~1 second. |
-| **Frontend** | AWS Amplify | Simplifies React CI/CD and hosting with minimal configuration. |
+| **Frontend** | Render static site | Deploys from the same Blueprint (`render.yaml`) as the API, after CI passes. |
 
 ### Cost Analysis
 
@@ -92,7 +92,7 @@ flowchart LR
 - **Amazon API Gateway:** REST APIs for WhatsApp webhooks and Admin dashboard.
 - **AWS KMS:** Encryption of sensitive data (like Aadhaar images).
 - **AWS CloudFormation (SAM):** Infrastructure as Code (single `template.yaml`).
-- **AWS Amplify:** Hosting for the React admin dashboard.
+- **Render:** Hosts the API, the reminder cron job, the Nodus fraud bridge and the React dashboard (`render.yaml`).
 
 ## Quick Start
 
@@ -105,33 +105,47 @@ flowchart LR
 ### Configuration
 Copy `.env.example` to `.env` and fill in your values. Never commit real secrets. In AWS, these values are passed to the stack via SAM parameters (`NoEcho`).
 
-### Deploy Backend
+### Deploy
+
+The app runs on Render; the data (DynamoDB, S3) and the AI services stay on AWS.
+
+**1. AWS stack (once, then on every `template.yaml` change).** Creates the tables, buckets and
+the `RenderRuntimeUser` IAM user. The `Deploy AWS stack` workflow does this from GitHub; by hand:
 
 ```bash
-# Install dependencies
-npm install
-
-# Build the Lambda functions
-sam build
-
-# Deploy (first time requires --guided to set parameters)
-sam deploy --guided
+sam build && sam deploy --guided
+aws iam create-access-key --user-name <RenderRuntimeUserName output>
 ```
 
-After deploying:
-1. Set the stack output `WhatsAppWebhookUrl` as the callback URL in your Meta app.
-2. Use the exact verify token you passed as `WhatsAppVerifyToken`.
-3. Subscribe the webhook to the `messages` field.
+**2. Render.** In the Render dashboard choose **New → Blueprint**, pick this repo, and fill in the
+secrets it asks for (the access key from step 1, the bucket names from the stack outputs, and the
+values from `.env.example`). It creates four services from `render.yaml`:
 
-### Deploy Frontend (Local Dev)
+| Service | What |
+|---|---|
+| `nirman-mitra-api` | WhatsApp webhook + all `/api/*` routes |
+| `nirman-mitra-reminders` | Proactive reminders, every 15 minutes |
+| `nirman-fraud-bridge` | Node → Nodus selfie fraud check |
+| `nirman-mitra-admin` | Dashboard / officer portal (static) |
+
+Then point things at the new URLs: `VITE_API_URL` (dashboard) = the API URL, `PORTAL_URL` and
+`FRAUD_SERVICE_URL` (API) = the dashboard and bridge URLs. After that, every push to `main`
+deploys once CI passes.
+
+**3. WhatsApp.** In the Meta app set the callback URL to
+`https://<nirman-mitra-api host>/webhook/whatsapp`, use the same `WHATSAPP_VERIFY_TOKEN`, and
+subscribe to the `messages` field.
+
+### Run Locally
 
 ```bash
+npm install
+node src/server.js          # API on :3001, in-memory demo store when ENVIRONMENT=dev
+
 cd admin-dashboard
 npm install
-echo "VITE_API_URL=<your-api-gateway-endpoint>" > .env
-npm run dev
+npm run dev                 # proxies /api and /webhook to :3001
 ```
-*Note: To deploy the dashboard to production, you can link the `admin-dashboard` directory to an AWS Amplify app.*
 
 ### Create the First Admin User
 ```bash
