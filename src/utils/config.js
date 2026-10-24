@@ -132,6 +132,11 @@ const config = Object.freeze({
     nodusBaseUrl: (process.env.NODUS_BASE_URL || 'https://inference.nodus-compute.ai/v1').replace(/\/+$/, ''),
   },
 
+  // Agent37 ops agent: SHA-256 (hex) of the key it sends as X-Agent-Key (see agentRoutes.js)
+  agent: {
+    apiKeyHash: (process.env.AGENT_API_KEY_HASH || '').trim().toLowerCase(),
+  },
+
   // Nodus fraud service (nodus/bridge.py). gpsHashKey keys the hash of each exact GPS fix so the
   // nightly sweep can spot identical fixes without the coordinates being stored.
   fraud: {
@@ -191,7 +196,7 @@ export function getCertificateThreshold() {
 export function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Api-Key',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Api-Key,X-Agent-Key',
     'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
     'Content-Type': 'application/json',
   };

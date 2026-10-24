@@ -39,6 +39,7 @@ import {
   parseSiteCompanyId,
   CompanyError,
 } from './companyRoutes.js';
+import { handleAgentRoute } from './agentRoutes.js';
 
 /** Client error with a safe, generic message */
 class HttpError extends Error {
@@ -153,6 +154,11 @@ export const handler = async (event) => {
     // ── Public routes (no token required) ──────────────────
     if (path.includes('/api/certificate/') && path.endsWith('/verify')) {
       return await verifyCertificate(event, path);
+    }
+
+    // ── Agent routes — X-Agent-Key, not a JWT (Agent37 ops agent) ──
+    if (path.includes('/api/agent/')) {
+      return await handleAgentRoute(event, path, method);
     }
 
     // ── Protected routes — require valid JWT ───────────────

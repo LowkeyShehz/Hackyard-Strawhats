@@ -102,6 +102,12 @@ Parameters:
     NoEcho: true
     Description: Key for hashing exact GPS fixes (falls back to JwtSecret)
 
+  AgentApiKeyHash:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: SHA-256 (hex) of the X-Agent-Key used by the Agent37 ops agent; empty disables /api/agent/*
+
   LlmProvider:
     Type: String
     Default: 'nodus'
@@ -185,6 +191,7 @@ Globals:
         FRAUD_SERVICE_URL: !Ref FraudServiceUrl
         FRAUD_SERVICE_TOKEN: !Ref FraudServiceToken
         GPS_HASH_KEY: !Ref GpsHashKey
+        AGENT_API_KEY_HASH: !Ref AgentApiKeyHash
         LEX_BOT_ID: ''
         LEX_BOT_ALIAS_ID: ''
         LEX_LOCALE_ID: 'en_US'
@@ -555,7 +562,7 @@ Resources:
       TracingEnabled: true
       Cors:
         AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
-        AllowHeaders: "'Content-Type,Authorization,X-Api-Key'"
+        AllowHeaders: "'Content-Type,Authorization,X-Api-Key,X-Agent-Key'"
         AllowOrigin: "'*'"
       MethodSettings:
         - ResourcePath: '/*'
@@ -904,6 +911,30 @@ Resources:
             RestApiId: !Ref NirmanMitraApi
             Path: /api/company/muster.csv
             Method: GET
+        AgentReviewQueue:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/agent/review-queue
+            Method: GET
+        AgentFraudFlags:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/agent/fraud-flags
+            Method: GET
+        AgentDailyStats:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/agent/daily-stats
+            Method: GET
+        AgentTriageNote:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/agent/review/{logId}/note
+            Method: POST
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref WorkersTable
