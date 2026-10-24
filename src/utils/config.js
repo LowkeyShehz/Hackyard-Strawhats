@@ -137,6 +137,11 @@ const config = Object.freeze({
     apiKeyHash: (process.env.AGENT_API_KEY_HASH || '').trim().toLowerCase(),
   },
 
+  // ElevenLabs "Mitra Helpline" agent: shared secret sent by its server tools (helplineRoutes.js)
+  helpline: {
+    secret: process.env.HELPLINE_SECRET || '',
+  },
+
   // Nodus fraud service (nodus/bridge.py). gpsHashKey keys the hash of each exact GPS fix so the
   // nightly sweep can spot identical fixes without the coordinates being stored.
   fraud: {

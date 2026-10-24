@@ -108,6 +108,12 @@ Parameters:
     NoEcho: true
     Description: SHA-256 (hex) of the X-Agent-Key used by the Agent37 ops agent; empty disables /api/agent/*
 
+  HelplineSecret:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Secret header value sent by the ElevenLabs helpline agent's server tools; empty disables /api/helpline/*
+
   LlmProvider:
     Type: String
     Default: 'nodus'
@@ -192,6 +198,7 @@ Globals:
         FRAUD_SERVICE_TOKEN: !Ref FraudServiceToken
         GPS_HASH_KEY: !Ref GpsHashKey
         AGENT_API_KEY_HASH: !Ref AgentApiKeyHash
+        HELPLINE_SECRET: !Ref HelplineSecret
         LEX_BOT_ID: ''
         LEX_BOT_ALIAS_ID: ''
         LEX_LOCALE_ID: 'en_US'
@@ -934,6 +941,12 @@ Resources:
           Properties:
             RestApiId: !Ref NirmanMitraApi
             Path: /api/agent/review/{logId}/note
+            Method: POST
+        HelplineProgress:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/helpline/progress
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:

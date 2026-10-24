@@ -40,6 +40,7 @@ import {
   CompanyError,
 } from './companyRoutes.js';
 import { handleAgentRoute } from './agentRoutes.js';
+import { handleHelplineRoute } from './helplineRoutes.js';
 
 /** Client error with a safe, generic message */
 class HttpError extends Error {
@@ -159,6 +160,11 @@ export const handler = async (event) => {
     // ── Agent routes — X-Agent-Key, not a JWT (Agent37 ops agent) ──
     if (path.includes('/api/agent/')) {
       return await handleAgentRoute(event, path, method);
+    }
+
+    // ── Helpline routes — X-Helpline-Secret (ElevenLabs agent tools) ──
+    if (path.includes('/api/helpline/')) {
+      return await handleHelplineRoute(event, path, method);
     }
 
     // ── Protected routes — require valid JWT ───────────────

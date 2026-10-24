@@ -1,0 +1,23 @@
+{
+  "type": "webhook",
+  "name": "get_my_progress",
+  "description": "Look up the caller's own attendance progress: days logged, days remaining for the welfare certificate, last check-in status, and whether a certificate was issued. Call this whenever the worker asks about their days, attendance, review status or certificate.",
+  "api_schema": {
+    "url": "https://<api-id>.execute-api.ap-south-1.amazonaws.com/prod/api/helpline/progress",
+    "method": "POST",
+    "request_headers": {
+      "X-Helpline-Secret": "<HELPLINE_SECRET, stored as an ElevenLabs secret>"
+    },
+    "request_body_schema": {
+      "type": "object",
+      "properties": {
+        "caller_id": {
+          "type": "string",
+          "description": "Filled from the {{system__caller_id}} dynamic variable, never from the conversation",
+          "dynamic_variable": "system__caller_id"
+        }
+      },
+      "required": ["caller_id"]
+    }
+  }
+}
