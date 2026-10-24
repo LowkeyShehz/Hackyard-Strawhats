@@ -32,3 +32,4 @@ __pycache__/
 .pytest_cache/
 .venv/
 nodus/outputs/
+agents/agent37/outputs/
