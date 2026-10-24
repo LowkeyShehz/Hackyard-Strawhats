@@ -16,13 +16,13 @@ import {
   DeleteCommand,
   ScanCommand,
 } from '@aws-sdk/lib-dynamodb';
-import config from './config.js';
+import config, { isDemoMode } from './config.js';
 
 // ─────────────────────────────────────────────────────────
 // In-Memory Mock Store (demo / local testing only)
 // ─────────────────────────────────────────────────────────
 
-const IS_DEMO = !process.env.AWS_LAMBDA_FUNCTION_NAME && (process.env.ENVIRONMENT || 'dev') === 'dev';
+const IS_DEMO = isDemoMode();
 
 // Map<tableName, Map<compositeKey, item>>
 const memStore = new Map();
