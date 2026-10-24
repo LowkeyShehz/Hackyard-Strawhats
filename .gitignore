@@ -33,3 +33,4 @@ __pycache__/
 .venv/
 nodus/outputs/
 agents/agent37/outputs/
+tts-tests/
