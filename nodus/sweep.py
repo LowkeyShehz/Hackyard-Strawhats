@@ -23,8 +23,8 @@ from boto3.dynamodb.conditions import Attr
 from fraud_core import Checkin, decode_vector, sweep
 
 REGION = os.environ.get("AWS_REGION", "ap-south-1")
-ATTENDANCE_TABLE = os.environ.get("ATTENDANCE_TABLE", "NirmanMitra-AttendanceLogs-prod")
-WORKERS_TABLE = os.environ.get("WORKERS_TABLE", "NirmanMitra-Workers-prod")
+ATTENDANCE_TABLE = os.environ.get("ATTENDANCE_TABLE", "NirmanMitra-AttendanceLogs-dev")
+WORKERS_TABLE = os.environ.get("WORKERS_TABLE", "NirmanMitra-Workers-dev")
 DAYS = int(os.environ.get("SWEEP_DAYS", "14"))
 DRY_RUN = os.environ.get("SWEEP_DRY_RUN") == "1"
 OUTPUTS = os.environ.get("NODUS_OUTPUTS_DIR", "./outputs")
