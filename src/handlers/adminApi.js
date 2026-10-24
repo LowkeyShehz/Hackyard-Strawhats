@@ -40,6 +40,7 @@ import {
   CompanyError,
 } from './companyRoutes.js';
 import { handleAgentRoute } from './agentRoutes.js';
+import { handleAdminExport } from './exportRoutes.js';
 import { handleHelplineRoute } from './helplineRoutes.js';
 
 /** Client error with a safe, generic message */
@@ -254,6 +255,10 @@ export const handler = async (event) => {
     if (path.includes('/api/admin/site-breakdown')) {
       return await getSiteBreakdown();
     }
+
+    // CSV datasets for Adaption Visualize (pseudonymised; see exportRoutes.js)
+    const exportResponse = await handleAdminExport(event, path, method, admin);
+    if (exportResponse) return exportResponse;
 
     return apiResponse(404, { error: 'Route not found' });
   } catch (err) {
