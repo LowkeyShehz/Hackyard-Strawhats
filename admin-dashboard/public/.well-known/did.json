@@ -1,0 +1,25 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/suites/jws-2020/v1"
+  ],
+  "id": "did:web:main.d26uqawil4ygv7.amplifyapp.com",
+  "verificationMethod": [
+    {
+      "id": "did:web:main.d26uqawil4ygv7.amplifyapp.com#key-1",
+      "type": "JsonWebKey2020",
+      "controller": "did:web:main.d26uqawil4ygv7.amplifyapp.com",
+      "publicKeyJwk": {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "RmLYqCoOR9I12KGiZEHauqJsGdWcXOaOA66LF5T6CvQ",
+        "y": "TRVkzF2yuM1YT4emlxG5ugoEZlKwfwJba-9a88ik8KI",
+        "kid": "key-1",
+        "alg": "ES256"
+      }
+    }
+  ],
+  "assertionMethod": [
+    "did:web:main.d26uqawil4ygv7.amplifyapp.com#key-1"
+  ]
+}

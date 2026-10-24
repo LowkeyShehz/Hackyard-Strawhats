@@ -1,0 +1,21 @@
+{
+  "_comment": "DEMO sites only. Coordinates are placeholders for demos, not real project sites. Load with scripts/seed-sites.mjs.",
+  "sites": [
+    {
+      "site_id": "DEMO-NITK-SURATHKAL",
+      "name": "[DEMO] NITK Surathkal campus",
+      "latitude": 13.0108,
+      "longitude": 74.7943,
+      "radius_meters": 500,
+      "is_active": true
+    },
+    {
+      "site_id": "DEMO-BENGALURU-MG-ROAD",
+      "name": "[DEMO] Bengaluru MG Road site",
+      "latitude": 12.9716,
+      "longitude": 77.5946,
+      "radius_meters": 500,
+      "is_active": true
+    }
+  ]
+}

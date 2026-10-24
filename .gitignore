@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build output
+.aws-sam/
+dist/
+build/
+coverage/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+samconfig.toml
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

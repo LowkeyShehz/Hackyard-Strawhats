@@ -1,0 +1,1108 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Nirman Mitra — AI Techno-Legal Concierge for Construction Worker Welfare
+  Voice-First | Zero Literacy Required | WhatsApp-Native
+
+# ─────────────────────────────────────────────────────────────
+# PARAMETERS
+# ─────────────────────────────────────────────────────────────
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+
+  CertificateThreshold:
+    Type: Number
+    Default: 3
+    Description: Days required for certificate (3 for demo, 90 for prod)
+
+  PortalUrl:
+    Type: String
+    Default: ''
+    Description: Public URL of the dashboard / officer portal (e.g. https://main.xxxx.amplifyapp.com); certificate QR codes link to <PortalUrl>/verify/<hash>
+
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: Optional email address for Lambda error alarms (leave empty for no notifications)
+
+  CredentialSigningKey:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Issuer ES256 private key (JWK, base64-encoded) used to sign work credentials
+
+  DemoPhoneNumbers:
+    Type: String
+    Default: ''
+    Description: Comma-separated team phone numbers (e.g. 919876543210) allowed to use the demo keywords
+
+  WhatsAppApiToken:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: WhatsApp Cloud API access token (System User token)
+
+  WhatsAppPhoneNumberId:
+    Type: String
+    Default: ''
+    Description: WhatsApp Business phone number ID
+
+  WhatsAppVerifyToken:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Token Meta echoes during webhook verification
+
+  WhatsAppAppSecret:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Meta app secret used to validate X-Hub-Signature-256
+
+  GroqApiKey:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Groq API key for the LLM provider
+
+  LlmModel:
+    Type: String
+    Default: 'openai/gpt-oss-120b'
+    Description: Model name passed to the LLM provider
+
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: Secret key for signing JWT access tokens (required, at least 32 random characters)
+
+  JwtRefreshSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: Secret key for signing JWT refresh tokens (required, at least 32 random characters)
+
+  AdminSeedSecret:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Secret for the admin seed endpoint (non-dev environments)
+
+
+# ─────────────────────────────────────────────────────────────
+# GLOBALS
+# ─────────────────────────────────────────────────────────────
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Timeout: 30
+    MemorySize: 512
+    Tracing: Active
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        CERTIFICATE_THRESHOLD: !Ref CertificateThreshold
+        DEMO_PHONE_NUMBERS: !Ref DemoPhoneNumbers
+        CREDENTIAL_SIGNING_JWK: !Ref CredentialSigningKey
+        PORTAL_URL: !Ref PortalUrl
+        WORKERS_TABLE: !Ref WorkersTable
+        ATTENDANCE_TABLE: !Ref AttendanceLogsTable
+        SITES_TABLE: !Ref SitesTable
+        CERTIFICATES_TABLE: !Ref CertificatesTable
+        DOCUMENTS_TABLE: !Ref DocumentsTable
+        CONVERSATION_TABLE: !Ref ConversationStateTable
+        MEDIA_RAW_BUCKET: !Ref MediaRawBucket
+        MEDIA_PROCESSED_BUCKET: !Ref MediaProcessedBucket
+        CERTIFICATES_BUCKET: !Ref CertificatesBucket
+        WHATSAPP_API_TOKEN: !Ref WhatsAppApiToken
+        WHATSAPP_PHONE_NUMBER_ID: !Ref WhatsAppPhoneNumberId
+        WHATSAPP_VERIFY_TOKEN: !Ref WhatsAppVerifyToken
+        WHATSAPP_APP_SECRET: !Ref WhatsAppAppSecret
+        PROCESSING_QUEUE_URL: !Ref ProcessingQueue
+        DLQ_URL: !Ref DeadLetterQueue
+        JWT_SECRET: !Ref JwtSecret
+        JWT_REFRESH_SECRET: !Ref JwtRefreshSecret
+        ADMIN_SEED_SECRET: !Ref AdminSeedSecret
+        ADMIN_USERS_TABLE: !Ref AdminUsersTable
+        REFRESH_TOKENS_TABLE: !Ref RefreshTokensTable
+        AUDIT_TABLE: !Ref AuditLogTable
+        REKOGNITION_COLLECTION_ID: nirman-mitra-workers
+        BEDROCK_CACHE_TABLE: !Ref BedrockCacheTable
+        LLM_PROVIDER: groq
+        LLM_MODEL: !Ref LlmModel
+        GROQ_API_KEY: !Ref GroqApiKey
+        LEX_BOT_ID: ''
+        LEX_BOT_ALIAS_ID: ''
+        LEX_LOCALE_ID: 'en_US'
+
+Resources:
+
+  # No customer-managed KMS keys: media buckets use SSE-S3 (AES256) and only
+  # the last 4 digits of an Aadhaar number are stored.
+
+  # ─────────────────────────────────────────────────────────
+  # S3 BUCKETS
+  # ─────────────────────────────────────────────────────────
+
+  MediaRawBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'nirman-mitra-media-raw-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteRawMediaAfter90Days
+            Status: Enabled
+            Prefix: workers/
+            ExpirationInDays: 90
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  MediaProcessedBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'nirman-mitra-media-processed-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: RetainProcessedMedia7Years
+            Status: Enabled
+            ExpirationInDays: 2555
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  CertificatesBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'nirman-mitra-certificates-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ─────────────────────────────────────────────────────────
+  # DYNAMODB TABLES
+  # ─────────────────────────────────────────────────────────
+
+  WorkersTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub 'NirmanMitra-Workers-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: worker_id
+          AttributeType: S
+        - AttributeName: phone_number
+          AttributeType: S
+        - AttributeName: profile_status
+          AttributeType: S
+        - AttributeName: next_reminder_time
+          AttributeType: S
+      KeySchema:
+        - AttributeName: worker_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: PhoneNumberIndex
+          KeySchema:
+            - AttributeName: phone_number
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: ReminderIndex
+          KeySchema:
+            - AttributeName: profile_status
+              KeyType: HASH
+            - AttributeName: next_reminder_time
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  AttendanceLogsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub 'NirmanMitra-AttendanceLogs-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: worker_id
+          AttributeType: S
+        - AttributeName: log_date
+          AttributeType: S
+        - AttributeName: site_id
+          AttributeType: S
+        - AttributeName: verification_status
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: worker_id
+          KeyType: HASH
+        - AttributeName: log_date
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: SiteLogsIndex
+          KeySchema:
+            - AttributeName: site_id
+              KeyType: HASH
+            - AttributeName: log_date
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: ReviewQueueIndex
+          KeySchema:
+            - AttributeName: verification_status
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  SitesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub 'NirmanMitra-Sites-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: site_id
+          AttributeType: S
+        - AttributeName: is_active
+          AttributeType: S
+      KeySchema:
+        - AttributeName: site_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: ActiveSitesIndex
+          KeySchema:
+            - AttributeName: is_active
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  CertificatesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub 'NirmanMitra-Certificates-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: worker_id
+          AttributeType: S
+        - AttributeName: certificate_id
+          AttributeType: S
+        - AttributeName: verification_hash
+          AttributeType: S
+      KeySchema:
+        - AttributeName: worker_id
+          KeyType: HASH
+        - AttributeName: certificate_id
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: VerificationHashIndex
+          KeySchema:
+            - AttributeName: verification_hash
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: CertificateIdIndex
+          KeySchema:
+            - AttributeName: certificate_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: KEYS_ONLY
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # Append-only: functions get PutItem/GetItem/Query on it, never UpdateItem or DeleteItem
+  AuditLogTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub 'NirmanMitra-AuditLog-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: subject
+          AttributeType: S
+        - AttributeName: entry_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: subject
+          KeyType: HASH
+        - AttributeName: entry_id
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  DocumentsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub 'NirmanMitra-Documents-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: worker_id
+          AttributeType: S
+        - AttributeName: document_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: worker_id
+          KeyType: HASH
+        - AttributeName: document_id
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  ConversationStateTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub 'NirmanMitra-ConversationState-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: worker_id
+          AttributeType: S
+        - AttributeName: session_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: worker_id
+          KeyType: HASH
+        - AttributeName: session_id
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  BedrockCacheTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub 'NirmanMitra-BedrockCache-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: input_hash
+          AttributeType: S
+      KeySchema:
+        - AttributeName: input_hash
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  AdminUsersTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub 'NirmanMitra-AdminUsers-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: admin_id
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: admin_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: EmailIndex
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  RefreshTokensTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub 'NirmanMitra-RefreshTokens-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: token_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: token_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # ─────────────────────────────────────────────────────────
+  # SQS QUEUES
+  # ─────────────────────────────────────────────────────────
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'nirman-mitra-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600
+
+  ProcessingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'nirman-mitra-processing-${Environment}'
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  # ─────────────────────────────────────────────────────────
+  # API GATEWAY
+  # ─────────────────────────────────────────────────────────
+
+  NirmanMitraApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub 'NirmanMitra-API-${Environment}'
+      StageName: !Ref Environment
+      TracingEnabled: true
+      Cors:
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization,X-Api-Key'"
+        AllowOrigin: "'*'"
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingBurstLimit: 50
+          ThrottlingRateLimit: 100
+
+  # ─────────────────────────────────────────────────────────
+  # LAMBDA FUNCTIONS
+  # ─────────────────────────────────────────────────────────
+
+  MessageHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'nirman-mitra-message-handler-${Environment}'
+      Handler: src/handlers/messageHandler.handler
+      Description: WhatsApp webhook receiver — routes messages to appropriate flows
+      # The webhook call only verifies and hands off; the async self-invocation does the slow work
+      Timeout: 120
+      Environment:
+        Variables:
+          ASYNC_WEBHOOK: 'true'
+      Events:
+        WhatsAppWebhookGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /webhook/whatsapp
+            Method: GET
+        WhatsAppWebhookPost:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /webhook/whatsapp
+            Method: POST
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WorkersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConversationStateTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AttendanceLogsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SitesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CertificatesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DocumentsTable
+        - S3CrudPolicy:
+            BucketName: !Ref MediaRawBucket
+        - S3CrudPolicy:
+            BucketName: !Ref MediaProcessedBucket
+        - S3CrudPolicy:
+            BucketName: !Ref CertificatesBucket
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt ProcessingQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action: [states:StartExecution]
+              Resource:
+                - !Ref OnboardingFlowStateMachine
+                - !Ref AttendanceFlowStateMachine
+        - Statement:
+            - Effect: Allow
+              Action: [lambda:InvokeFunction]
+              Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:nirman-mitra-message-handler-${Environment}'
+        - Statement:
+            - Effect: Allow
+              Action: [polly:SynthesizeSpeech]
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - rekognition:CompareFaces
+                - rekognition:SearchFacesByImage
+                - rekognition:IndexFaces
+                - rekognition:DeleteFaces
+                - rekognition:DetectFaces
+                - rekognition:CreateCollection
+              Resource: '*'
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BedrockCacheTable
+        - Statement:
+            - Effect: Allow
+              Action: [textract:AnalyzeDocument, textract:DetectDocumentText]
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action: [transcribe:StartTranscriptionJob, transcribe:GetTranscriptionJob]
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:Query]
+              Resource: !GetAtt AuditLogTable.Arn
+
+  AttendanceProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'nirman-mitra-attendance-processor-${Environment}'
+      Handler: src/handlers/attendanceProcessor.handler
+      Description: Triple Verification™ — face + GPS + voice confidence routing
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WorkersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AttendanceLogsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SitesTable
+        - S3ReadPolicy:
+            BucketName: !Ref MediaRawBucket
+        - Statement:
+            - Effect: Allow
+              Action: [rekognition:CompareFaces, rekognition:DetectFaces]
+              Resource: '*'
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BedrockCacheTable
+
+  DocumentVerifierFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'nirman-mitra-document-verifier-${Environment}'
+      Handler: src/handlers/documentVerifier.handler
+      Description: Textract OCR + name cross-validation for identity documents
+      Timeout: 60
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WorkersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DocumentsTable
+        - S3CrudPolicy:
+            BucketName: !Ref MediaRawBucket
+        - S3CrudPolicy:
+            BucketName: !Ref MediaProcessedBucket
+        - Statement:
+            - Effect: Allow
+              Action: [textract:AnalyzeDocument, textract:DetectDocumentText]
+              Resource: '*'
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BedrockCacheTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - rekognition:IndexFaces
+                - rekognition:DeleteFaces
+                - rekognition:CreateCollection
+                - rekognition:SearchFacesByImage
+                - rekognition:CompareFaces
+                - rekognition:DetectFaces
+              Resource: '*'
+        - Statement:
+            - Effect: Allow
+              Action: [polly:SynthesizeSpeech]
+              Resource: '*'
+
+  CertificateGeneratorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'nirman-mitra-certificate-generator-${Environment}'
+      Handler: src/handlers/certificateGenerator.handler
+      Description: Smart Certificate PDF with QR + SHA-256 at day threshold
+      Timeout: 60
+      MemorySize: 1024
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref WorkersTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref AttendanceLogsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CertificatesTable
+        - S3CrudPolicy:
+            BucketName: !Ref CertificatesBucket
+
+  NotificationSenderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'nirman-mitra-notification-sender-${Environment}'
+      Handler: src/handlers/notificationSender.handler
+      Description: Polly TTS + WhatsApp message delivery
+      Timeout: 15
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref WorkersTable
+        - S3CrudPolicy:
+            BucketName: !Ref MediaProcessedBucket
+        - Statement:
+            - Effect: Allow
+              Action: [polly:SynthesizeSpeech]
+              Resource: '*'
+
+  AdminApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'nirman-mitra-admin-api-${Environment}'
+      Handler: src/handlers/adminApi.handler
+      Description: Admin dashboard API — stats, review queue, worker search
+      Timeout: 15
+      Events:
+        AuthLogin:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/auth/login
+            Method: POST
+        AuthRefresh:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/auth/refresh
+            Method: POST
+        AuthLogout:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/auth/logout
+            Method: POST
+        AuthSeed:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/auth/seed
+            Method: POST
+        DashboardStats:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/admin/dashboard
+            Method: GET
+        ListWorkers:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/admin/workers
+            Method: GET
+        ReviewQueue:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/admin/review-queue
+            Method: GET
+        ReviewAction:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/admin/review/{logId}
+            Method: PUT
+        WorkerProfile:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/admin/worker/{id}
+            Method: GET
+        WorkerProgress:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/worker/{id}/progress
+            Method: GET
+        CertificateVerify:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/certificate/{id}/verify
+            Method: GET
+        AttendanceTrends:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/admin/attendance-trends
+            Method: GET
+        ConfidenceStats:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/admin/confidence-stats
+            Method: GET
+        SiteBreakdown:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/admin/site-breakdown
+            Method: GET
+        ListSites:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/admin/sites
+            Method: GET
+        UpsertSite:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/admin/sites
+            Method: POST
+        OfficerView:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/officer/view
+            Method: POST
+        OfficerDecision:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/officer/approve
+            Method: POST
+        CredentialAudit:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/officer/credential/{jti}/audit
+            Method: GET
+        ListCompanies:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/admin/companies
+            Method: GET
+        CreateCompany:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/admin/companies
+            Method: POST
+        CompanyOverview:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/company/overview
+            Method: GET
+        CompanyRoster:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/company/roster
+            Method: GET
+        CompanyFlags:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/company/flags
+            Method: GET
+        CompanyMusterRoll:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NirmanMitraApi
+            Path: /api/company/muster.csv
+            Method: GET
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WorkersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AttendanceLogsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SitesTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref CertificatesTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref DocumentsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AdminUsersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RefreshTokensTable
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:Query]
+              Resource: !GetAtt AuditLogTable.Arn
+
+  ProactiveReminderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'nirman-mitra-proactive-reminder-${Environment}'
+      Handler: src/handlers/proactiveReminder.handler
+      Description: Sends WhatsApp reminders to workers who missed check-ins
+      Timeout: 60
+      Events:
+        ScheduleTimer:
+          Type: Schedule
+          Properties:
+            Schedule: rate(15 minutes)
+            Name: !Sub 'nirman-mitra-reminder-schedule-${Environment}'
+            Description: Run every 15 minutes to check for pending reminders
+            Enabled: true
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WorkersTable
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:Query]
+              Resource: !Sub '${WorkersTable.Arn}/index/ReminderIndex'
+      Environment:
+        Variables:
+          WHATSAPP_REMINDER_TEMPLATE_NAME: 'daily_checkin_reminder'
+
+  # ─────────────────────────────────────────────────────────
+  # STEP FUNCTIONS
+  # ─────────────────────────────────────────────────────────
+
+  OnboardingFlowStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub 'NirmanMitra-OnboardingFlow-${Environment}'
+      DefinitionUri: src/stepFunctions/onboardingFlow.asl.json
+      DefinitionSubstitutions:
+        DocumentVerifierArn: !GetAtt DocumentVerifierFunction.Arn
+        NotificationSenderArn: !GetAtt NotificationSenderFunction.Arn
+        WorkersTableName: !Ref WorkersTable
+      Tracing:
+        Enabled: true
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref DocumentVerifierFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref NotificationSenderFunction
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WorkersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DocumentsTable
+
+  AttendanceFlowStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub 'NirmanMitra-AttendanceFlow-${Environment}'
+      DefinitionUri: src/stepFunctions/attendanceFlow.asl.json
+      DefinitionSubstitutions:
+        AttendanceProcessorArn: !GetAtt AttendanceProcessorFunction.Arn
+        NotificationSenderArn: !GetAtt NotificationSenderFunction.Arn
+        WorkersTableName: !Ref WorkersTable
+        AttendanceTableName: !Ref AttendanceLogsTable
+        SitesTableName: !Ref SitesTable
+      Tracing:
+        Enabled: true
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref AttendanceProcessorFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref NotificationSenderFunction
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WorkersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AttendanceLogsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref SitesTable
+
+  CertificateFlowStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub 'NirmanMitra-CertificateFlow-${Environment}'
+      DefinitionUri: src/stepFunctions/certificateFlow.asl.json
+      DefinitionSubstitutions:
+        CertificateGeneratorArn: !GetAtt CertificateGeneratorFunction.Arn
+        NotificationSenderArn: !GetAtt NotificationSenderFunction.Arn
+        WorkersTableName: !Ref WorkersTable
+        AttendanceTableName: !Ref AttendanceLogsTable
+        CertificatesTableName: !Ref CertificatesTable
+      Tracing:
+        Enabled: true
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CertificateGeneratorFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref NotificationSenderFunction
+        - DynamoDBReadPolicy:
+            TableName: !Ref WorkersTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref AttendanceLogsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CertificatesTable
+
+  # ─────────────────────────────────────────────────────────
+  # FRONTEND HOSTING (S3 STATIC WEBSITE)
+  # ─────────────────────────────────────────────────────────
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'nirman-mitra-frontend-${AWS::AccountId}'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${FrontendBucket.Arn}/*'
+
+  # ─────────────────────────────────────────────────────────
+  # CLOUDWATCH ALARMS
+  # ─────────────────────────────────────────────────────────
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasAlertEmail
+    Properties:
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmail
+
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'NirmanMitra-LambdaErrors-${Environment}'
+      AlarmDescription: More than 5 errors in 5 minutes from MessageHandlerFunction
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref MessageHandlerFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlertEmail, [!Ref AlertTopic], !Ref 'AWS::NoValue']
+
+  AdminApiErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'NirmanMitra-AdminApiError-${Environment}'
+      AlarmDescription: More than 5 errors in 5 minutes from AdminApiFunction
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AdminApiFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlertEmail, [!Ref AlertTopic], !Ref 'AWS::NoValue']
+
+  DLQDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'NirmanMitra-DLQDepth-${Environment}'
+      AlarmDescription: Alert when DLQ has unprocessed messages
+      MetricName: ApproximateNumberOfMessagesVisible
+      Namespace: AWS/SQS
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt DeadLetterQueue.QueueName
+
+# ─────────────────────────────────────────────────────────────
+# OUTPUTS
+# ─────────────────────────────────────────────────────────────
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${NirmanMitraApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+
+  WhatsAppWebhookUrl:
+    Description: Callback URL to configure in the Meta app's WhatsApp webhook settings
+    Value: !Sub 'https://${NirmanMitraApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/webhook/whatsapp'
+
+  WorkersTableName:
+    Value: !Ref WorkersTable
+  AttendanceTableName:
+    Value: !Ref AttendanceLogsTable
+  CertificatesTableName:
+    Value: !Ref CertificatesTable
+  MediaRawBucketName:
+    Value: !Ref MediaRawBucket
+  CertificatesBucketName:
+    Value: !Ref CertificatesBucket
+  OnboardingFlowArn:
+    Value: !Ref OnboardingFlowStateMachine
+  AttendanceFlowArn:
+    Value: !Ref AttendanceFlowStateMachine
+  CertificateFlowArn:
+    Value: !Ref CertificateFlowStateMachine
+  BedrockCacheTableName:
+    Value: !Ref BedrockCacheTable
+  FrontendUrl:
+    Description: S3 static website URL for admin dashboard
+    Value: !GetAtt FrontendBucket.WebsiteURL
+  FrontendBucketName:
+    Value: !Ref FrontendBucket

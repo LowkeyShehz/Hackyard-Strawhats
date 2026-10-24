@@ -1,0 +1,135 @@
+{
+  "Comment": "Nirman Mitra -- Certificate Flow. Triggered when worker reaches day threshold. Checks eligibility, generates PDF with QR + SHA-256, notifies worker.",
+  "StartAt": "CheckEligibility",
+  "States": {
+    "CheckEligibility": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${CertificateGeneratorArn}",
+        "Payload": {
+          "task": "check_eligibility",
+          "workerId.$": "$.workerId"
+        }
+      },
+      "ResultSelector": {
+        "eligibility.$": "$.Payload"
+      },
+      "ResultPath": "$.eligibilityCheck",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "IsEligible"
+    },
+
+    "IsEligible": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.eligibilityCheck.eligibility.eligible",
+          "BooleanEquals": true,
+          "Next": "GenerateCertificate"
+        }
+      ],
+      "Default": "NotEligible"
+    },
+
+    "GenerateCertificate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${CertificateGeneratorArn}",
+        "Payload": {
+          "task": "generate",
+          "workerId.$": "$.workerId",
+          "language.$": "$.language"
+        }
+      },
+      "ResultSelector": {
+        "certificate.$": "$.Payload"
+      },
+      "ResultPath": "$.generationResult",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 3,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "NotifyCertificateReady"
+    },
+
+    "NotifyCertificateReady": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationSenderArn}",
+        "Payload": {
+          "workerId.$": "$.workerId",
+          "notificationType": "certificate_ready",
+          "result.$": "$.generationResult.certificate"
+        }
+      },
+      "ResultPath": "$.notificationResult",
+      "End": true,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "Done",
+          "ResultPath": "$.notifyError"
+        }
+      ]
+    },
+
+    "NotEligible": {
+      "Type": "Pass",
+      "Comment": "Worker does not meet threshold or already has certificate",
+      "End": true
+    },
+
+    "HandleError": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationSenderArn}",
+        "Payload": {
+          "workerId.$": "$.workerId",
+          "notificationType": "error",
+          "error.$": "$.error"
+        }
+      },
+      "ResultPath": "$.errorNotification",
+      "Next": "FailState"
+    },
+
+    "FailState": {
+      "Type": "Fail",
+      "Error": "CertificateGenerationError",
+      "Cause": "An error occurred during certificate generation"
+    },
+
+    "Done": {
+      "Type": "Succeed"
+    }
+  }
+}

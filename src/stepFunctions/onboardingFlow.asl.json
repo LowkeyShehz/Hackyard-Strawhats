@@ -1,0 +1,318 @@
+{
+  "Comment": "Nirman Mitra — Onboarding Document Processing Pipeline. Orchestrates Aadhaar OCR, selfie enrollment, bank passbook OCR, cross-validation, and finalization.",
+  "StartAt": "ValidateInput",
+  "States": {
+    "ValidateInput": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.task",
+          "IsPresent": true,
+          "Next": "RouteByTask"
+        }
+      ],
+      "Default": "InvalidInput"
+    },
+
+    "RouteByTask": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.task",
+          "StringEquals": "process_aadhaar",
+          "Next": "ProcessAadhaar"
+        },
+        {
+          "Variable": "$.task",
+          "StringEquals": "process_selfie",
+          "Next": "ProcessSelfie"
+        },
+        {
+          "Variable": "$.task",
+          "StringEquals": "process_passbook",
+          "Next": "ProcessPassbook"
+        },
+        {
+          "Variable": "$.task",
+          "StringEquals": "cross_validate",
+          "Next": "CrossValidateDocuments"
+        },
+        {
+          "Variable": "$.task",
+          "StringEquals": "finalize",
+          "Next": "FinalizeRegistration"
+        }
+      ],
+      "Default": "InvalidInput"
+    },
+
+    "ProcessAadhaar": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${DocumentVerifierArn}",
+        "Payload": {
+          "task": "aadhaar",
+          "workerId.$": "$.workerId",
+          "imageKey.$": "$.imageKey",
+          "bucket.$": "$.bucket"
+        }
+      },
+      "ResultPath": "$.aadhaarResult",
+      "ResultSelector": {
+        "statusCode.$": "$.Payload.statusCode",
+        "body.$": "$.Payload.body"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed", "Lambda.ServiceException"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleProcessingError",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "NotifyAadhaarResult"
+    },
+
+    "NotifyAadhaarResult": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationSenderArn}",
+        "Payload": {
+          "workerId.$": "$.workerId",
+          "notificationType": "aadhaar_processed",
+          "result.$": "$.aadhaarResult"
+        }
+      },
+      "ResultPath": "$.notificationResult",
+      "End": true,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleProcessingError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+
+    "ProcessSelfie": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${DocumentVerifierArn}",
+        "Payload": {
+          "task": "selfie",
+          "workerId.$": "$.workerId",
+          "imageKey.$": "$.imageKey",
+          "bucket.$": "$.bucket"
+        }
+      },
+      "ResultPath": "$.selfieResult",
+      "ResultSelector": {
+        "statusCode.$": "$.Payload.statusCode",
+        "body.$": "$.Payload.body"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleProcessingError",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "NotifySelfieResult"
+    },
+
+    "NotifySelfieResult": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationSenderArn}",
+        "Payload": {
+          "workerId.$": "$.workerId",
+          "notificationType": "selfie_processed",
+          "result.$": "$.selfieResult"
+        }
+      },
+      "ResultPath": "$.notificationResult",
+      "End": true,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleProcessingError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+
+    "ProcessPassbook": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${DocumentVerifierArn}",
+        "Payload": {
+          "task": "bank_passbook",
+          "workerId.$": "$.workerId",
+          "imageKey.$": "$.imageKey",
+          "bucket.$": "$.bucket"
+        }
+      },
+      "ResultPath": "$.passbookResult",
+      "ResultSelector": {
+        "statusCode.$": "$.Payload.statusCode",
+        "body.$": "$.Payload.body"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleProcessingError",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "NotifyPassbookResult"
+    },
+
+    "NotifyPassbookResult": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationSenderArn}",
+        "Payload": {
+          "workerId.$": "$.workerId",
+          "notificationType": "passbook_processed",
+          "result.$": "$.passbookResult"
+        }
+      },
+      "ResultPath": "$.notificationResult",
+      "End": true,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleProcessingError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+
+    "CrossValidateDocuments": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${DocumentVerifierArn}",
+        "Payload": {
+          "task": "cross_validate",
+          "workerId.$": "$.workerId"
+        }
+      },
+      "ResultPath": "$.crossValidationResult",
+      "ResultSelector": {
+        "statusCode.$": "$.Payload.statusCode",
+        "body.$": "$.Payload.body"
+      },
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleProcessingError",
+          "ResultPath": "$.error"
+        }
+      ],
+      "End": true
+    },
+
+    "FinalizeRegistration": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${WorkersTableName}",
+        "Key": {
+          "worker_id": { "S.$": "$.workerId" }
+        },
+        "UpdateExpression": "SET profile_status = :status, registration_completed = :ts",
+        "ExpressionAttributeValues": {
+          ":status": { "S": "active" },
+          ":ts": { "S.$": "$$.State.EnteredTime" }
+        }
+      },
+      "ResultPath": "$.finalizeResult",
+      "Next": "NotifyRegistrationComplete",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleProcessingError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+
+    "NotifyRegistrationComplete": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationSenderArn}",
+        "Payload": {
+          "workerId.$": "$.workerId",
+          "notificationType": "registration_complete"
+        }
+      },
+      "ResultPath": "$.notificationResult",
+      "End": true,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleProcessingError",
+          "ResultPath": "$.error"
+        }
+      ]
+    },
+
+    "HandleProcessingError": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationSenderArn}",
+        "Payload": {
+          "workerId.$": "$.workerId",
+          "notificationType": "error",
+          "error.$": "$.error"
+        }
+      },
+      "ResultPath": "$.errorNotification",
+      "Next": "FailState"
+    },
+
+    "FailState": {
+      "Type": "Fail",
+      "Error": "OnboardingProcessingError",
+      "Cause": "An error occurred during onboarding document processing"
+    },
+
+    "InvalidInput": {
+      "Type": "Fail",
+      "Error": "InvalidInput",
+      "Cause": "Missing or invalid 'task' field in input"
+    }
+  }
+}

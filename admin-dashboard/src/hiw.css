@@ -1,0 +1,416 @@
+/* ═══════════════════════════════════════════════════════════════
+   PREMIUM REDESIGN — HOW IT WORKS SECTION
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Utilities */
+.text-saffron {
+    color: #C68642;
+    /* Premium Saffron/Gold */
+}
+
+/* Background Elements */
+.hiw-section {
+    position: relative;
+    background: linear-gradient(to bottom, #fafafa 0%, #fdfbf7 50%, #f8f6f0 100%);
+    overflow: hidden;
+    padding-top: 140px;
+    border-top: 1px solid rgba(163, 126, 82, 0.15);
+    /* Gold border top */
+}
+
+.hiw-bg-elements {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.hiw-bg-grid {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image:
+        linear-gradient(rgba(163, 126, 82, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(163, 126, 82, 0.05) 1px, transparent 1px);
+    background-size: 40px 40px;
+    -webkit-mask-image: radial-gradient(circle at center, black 20%, transparent 70%);
+    mask-image: radial-gradient(circle at center, black 20%, transparent 70%);
+}
+
+.hiw-bg-mandala {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 600px;
+    height: 600px;
+    animation: slowSpin 60s linear infinite;
+}
+
+@keyframes slowSpin {
+    from {
+        transform: translate(-50%, -50%) rotate(0deg);
+    }
+
+    to {
+        transform: translate(-50%, -50%) rotate(360deg);
+    }
+}
+
+/* Header Adjustments */
+.hiw-header {
+    position: relative;
+    z-index: 10;
+}
+
+.hiw-badge {
+    background: linear-gradient(to right, rgba(163, 126, 82, 0.1), rgba(163, 126, 82, 0.05));
+    border: 1px solid rgba(163, 126, 82, 0.3);
+    color: #A37E52;
+    /* Gold */
+    box-shadow: 0 4px 12px rgba(163, 126, 82, 0.1);
+}
+
+.hiw-main-title {
+    font-family: Georgia, 'Times New Roman', serif;
+    color: #194025;
+    /* Dark Green */
+}
+
+/* Timeline Steps */
+.hiw-step-item {
+    opacity: 0.5;
+    transition: opacity 0.4s ease;
+    cursor: pointer;
+}
+
+.hiw-step-item:hover {
+    opacity: 0.7;
+}
+
+.hiw-step-item.hiw-step-active {
+    opacity: 1;
+}
+
+.hiw-step-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    z-index: 2;
+}
+
+.hiw-step-circle-outer {
+    padding: 6px;
+    border-radius: 50%;
+    background: transparent;
+    border: 1px dashed rgba(163, 126, 82, 0.4);
+    transition: all 0.5s ease;
+}
+
+.hiw-step-active .hiw-step-circle-outer {
+    border-color: #C68642;
+    background: rgba(198, 134, 66, 0.1);
+    transform: scale(1.1);
+    animation: pulseGold 2s infinite;
+}
+
+@keyframes pulseGold {
+    0% {
+        box-shadow: 0 0 0 0 rgba(198, 134, 66, 0.4);
+    }
+
+    70% {
+        box-shadow: 0 0 0 10px rgba(198, 134, 66, 0);
+    }
+
+    100% {
+        box-shadow: 0 0 0 0 rgba(198, 134, 66, 0);
+    }
+}
+
+.hiw-step-circle {
+    width: 36px;
+    height: 36px;
+    background: #fff;
+    border: 2px solid #e2e8f0;
+    color: #94a3b8;
+    font-family: Georgia, serif;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.hiw-step-active .hiw-step-circle {
+    background: linear-gradient(135deg, #C68642, #A37E52);
+    border-color: #fcfbf8;
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(198, 134, 66, 0.4);
+}
+
+.hiw-step-connector {
+    width: 2px;
+    height: 100%;
+    min-height: 40px;
+    background: rgba(163, 126, 82, 0.2);
+    margin: 8px 0;
+    position: relative;
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.hiw-step-connector-fill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    background: linear-gradient(to bottom, #C68642, #A37E52);
+    transition: height 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.hiw-step-title {
+    color: #1a3c28;
+}
+
+.hiw-step-desc {
+    color: #4b443a;
+}
+
+/* Navigation Buttons */
+.hiw-nav-buttons {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    margin-top: 40px;
+}
+
+.hiw-nav-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    background: #fff;
+    border: 1px solid rgba(163, 126, 82, 0.25);
+    border-radius: 50%;
+    color: #194025;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    flex-shrink: 0;
+}
+
+.hiw-nav-arrow:hover:not(:disabled) {
+    background: #fdfbf7;
+    border-color: #C68642;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(198, 134, 66, 0.18);
+}
+
+.hiw-nav-arrow:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    background: #f8f9fa;
+    color: #94a3b8;
+    border-color: #e2e8f0;
+    box-shadow: none;
+}
+
+.hiw-nav-dots {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.hiw-nav-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(163, 126, 82, 0.2);
+    cursor: pointer;
+    padding: 0;
+    transition: all 0.35s ease;
+}
+
+.hiw-nav-dot:hover {
+    background: rgba(163, 126, 82, 0.45);
+    transform: scale(1.2);
+}
+
+.hiw-dot-active {
+    background: #C68642;
+    width: 28px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(198, 134, 66, 0.35);
+}
+
+/* Premium Phone Mockup Frame */
+.hiw-right-panel {
+    position: relative;
+    z-index: 10;
+}
+
+.hiw-device-stand {
+    position: absolute;
+    bottom: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 240px;
+    height: 12px;
+    background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.15) 0%, transparent 70%);
+    border-radius: 50%;
+    z-index: 0;
+}
+
+.wa-phone-frame {
+    background: linear-gradient(135deg, #e6e8eb 0%, #b8bfc6 100%);
+    padding: 12px;
+    border-radius: 44px;
+    box-shadow:
+        inset 0 2px 4px rgba(255, 255, 255, 0.8),
+        inset 0 -4px 8px rgba(0, 0, 0, 0.2),
+        0 30px 60px rgba(26, 60, 40, 0.2);
+    position: relative;
+    border: 1px solid #d1d5db;
+    overflow: visible;
+}
+
+.wa-phone-frame::before {
+    content: '';
+    position: absolute;
+    inset: 4px;
+    border-radius: 40px;
+    background: #000;
+    z-index: 0;
+}
+
+.wa-phone-screen {
+    position: relative;
+    z-index: 2;
+    border-radius: 36px;
+    height: 100%;
+    border: 2px solid #1a1a1a;
+    box-shadow: inset 0 0 0 2px #000;
+}
+
+/* Dynamic Island / Notch */
+.wa-phone-notch {
+    position: absolute;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 90px;
+    height: 24px;
+    background: #000;
+    border-radius: 12px;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0 8px;
+    box-shadow: inset 0 -1px 2px rgba(255, 255, 255, 0.1);
+}
+
+.wa-camera-lens {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #111;
+    border: 1px solid #222;
+    position: relative;
+    box-shadow: inset 0 0 4px rgba(255, 255, 255, 0.1);
+}
+
+.wa-camera-lens::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 3px;
+    height: 3px;
+    background: rgba(100, 150, 255, 0.5);
+    border-radius: 50%;
+}
+
+.wa-phone-glare {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 44px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, transparent 40%);
+    pointer-events: none;
+    z-index: 40;
+}
+
+/* WhatsApp Redesign inside Mockup */
+.wa-header {
+    background: linear-gradient(to right, #1A3C28, #2a5a3f);
+    /* Premium Green */
+    padding-top: 44px;
+    /* Space for notch */
+}
+
+.wa-chat-area {
+    background-color: #f0ede1;
+    /* Warm beige */
+    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23C68642' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+    padding: 16px 12px;
+    gap: 10px;
+}
+
+.wa-security-notice {
+    background: rgba(255, 204, 0, 0.15);
+    border: 1px solid rgba(255, 204, 0, 0.3);
+    border-radius: 8px;
+    padding: 6px 10px;
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.wa-security-notice span {
+    font-size: 10px;
+    color: #54656f;
+    line-height: 1.3;
+}
+
+.wa-msg {
+    border-radius: 12px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
+}
+
+.wa-msg-in {
+    background: #ffffff;
+    border-top-left-radius: 4px;
+    border: 1px solid rgba(0, 0, 0, 0.03);
+}
+
+.wa-msg-out {
+    background: #fdf6e3;
+    /* Light saffron/gold */
+    border-top-right-radius: 4px;
+    border: 1px solid rgba(198, 134, 66, 0.1);
+}
+
+.wa-cert-preview-inner {
+    background: linear-gradient(135deg, #fff3cd, #e6f4ea);
+    border: 1px solid rgba(163, 126, 82, 0.2);
+}
+
+.wa-cert-badge {
+    background: #C68642;
+}
+
+.wa-mic-btn {
+    background: linear-gradient(135deg, #1A3C28, #2a5a3f);
+    box-shadow: 0 4px 10px rgba(26, 60, 40, 0.3);
+}
+
+.wa-action-btn {
+    background: rgba(198, 134, 66, 0.1);
+    border-color: rgba(198, 134, 66, 0.3);
+    color: #C68642;
+}

@@ -1,0 +1,127 @@
+name: Deploy
+
+# Every push to master (i.e. every merged PR) is tested, then deployed:
+# backend with AWS SAM, dashboard to AWS Amplify. AWS access uses GitHub OIDC, no stored keys.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+  STACK_NAME: nirman-mitra-dev
+  AMPLIFY_APP_ID: d26uqawil4ygv7
+  AMPLIFY_BRANCH: main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  backend:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      # Lambda packages are built from the repo root; keep non-runtime folders out of them
+      - run: rm -rf admin-dashboard tests scripts data
+      - run: sam build
+      - name: sam deploy
+        env:
+          WHATSAPP_API_TOKEN: ${{ secrets.WHATSAPP_API_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
+          WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
+          WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          JWT_REFRESH_SECRET: ${{ secrets.JWT_REFRESH_SECRET }}
+          ADMIN_SEED_SECRET: ${{ secrets.ADMIN_SEED_SECRET }}
+          DEMO_PHONE_NUMBERS: ${{ secrets.DEMO_PHONE_NUMBERS }}
+          CREDENTIAL_SIGNING_KEY: ${{ secrets.CREDENTIAL_SIGNING_KEY }}
+          PORTAL_URL: ${{ vars.PORTAL_URL }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+        run: |
+          sam deploy \
+            --stack-name "$STACK_NAME" --region "$AWS_REGION" \
+            --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
+            --resolve-s3 --s3-prefix "$STACK_NAME" \
+            --no-confirm-changeset --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              "Environment=dev" \
+              "CertificateThreshold=3" \
+              "PortalUrl=$PORTAL_URL" \
+              "DemoPhoneNumbers=$DEMO_PHONE_NUMBERS" \
+              "CredentialSigningKey=$CREDENTIAL_SIGNING_KEY" \
+              "WhatsAppApiToken=$WHATSAPP_API_TOKEN" \
+              "WhatsAppPhoneNumberId=$WHATSAPP_PHONE_NUMBER_ID" \
+              "WhatsAppVerifyToken=$WHATSAPP_VERIFY_TOKEN" \
+              "WhatsAppAppSecret=$WHATSAPP_APP_SECRET" \
+              "GroqApiKey=$GROQ_API_KEY" \
+              "LlmModel=${LLM_MODEL:-openai/gpt-oss-120b}" \
+              "JwtSecret=$JWT_SECRET" \
+              "JwtRefreshSecret=$JWT_REFRESH_SECRET" \
+              "AdminSeedSecret=$ADMIN_SEED_SECRET"
+
+  dashboard:
+    needs: backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin-dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: admin-dashboard/package-lock.json
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy to Amplify
+        run: |
+          (cd dist && zip -qr ../dist.zip .)
+          deployment=$(aws amplify create-deployment --app-id "$AMPLIFY_APP_ID" --branch-name "$AMPLIFY_BRANCH")
+          job_id=$(echo "$deployment" | jq -r .jobId)
+          upload_url=$(echo "$deployment" | jq -r .zipUploadUrl)
+          curl -sSf -X PUT -H "Content-Type: application/zip" --data-binary @dist.zip "$upload_url"
+          aws amplify start-deployment --app-id "$AMPLIFY_APP_ID" --branch-name "$AMPLIFY_BRANCH" --job-id "$job_id" > /dev/null
+          for i in $(seq 1 60); do
+            status=$(aws amplify get-job --app-id "$AMPLIFY_APP_ID" --branch-name "$AMPLIFY_BRANCH" --job-id "$job_id" --query 'job.summary.status' --output text)
+            echo "Amplify job $job_id: $status"
+            [ "$status" = "SUCCEED" ] && exit 0
+            [ "$status" = "FAILED" ] && exit 1
+            sleep 5
+          done
+          exit 1

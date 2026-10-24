@@ -1,0 +1,326 @@
+{
+  "Comment": "Nirman Mitra -- Attendance Flow with Triple Verification (Parallel Branches). Face + GPS + Voice processed in parallel branches.",
+  "StartAt": "ValidateInput",
+  "States": {
+    "ValidateInput": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            { "Variable": "$.workerId", "IsPresent": true },
+            { "Variable": "$.selfieKey", "IsPresent": true }
+          ],
+          "Next": "TripleVerification"
+        }
+      ],
+      "Default": "InvalidInput"
+    },
+
+    "TripleVerification": {
+      "Type": "Parallel",
+      "Comment": "Branch A: Face + GPS (image pipeline) | Branch B: Voice (audio pipeline)",
+      "Branches": [
+        {
+          "StartAt": "FaceVerification",
+          "States": {
+            "FaceVerification": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${AttendanceProcessorArn}",
+                "Payload": {
+                  "task": "face_verify",
+                  "workerId.$": "$.workerId",
+                  "selfieKey.$": "$.selfieKey",
+                  "bucket.$": "$.bucket"
+                }
+              },
+              "ResultSelector": {
+                "faceResult.$": "$.Payload"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed", "Lambda.ServiceException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 2,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.faceError",
+                  "Next": "FaceVerificationFallback"
+                }
+              ],
+              "Next": "GeoVerification"
+            },
+            "FaceVerificationFallback": {
+              "Type": "Pass",
+              "Result": {
+                "faceResult": { "success": false, "confidence": 0, "reason": "face_verification_error" }
+              },
+              "Next": "GeoVerification"
+            },
+            "GeoVerification": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${AttendanceProcessorArn}",
+                "Payload": {
+                  "task": "geo_verify",
+                  "workerId.$": "$.workerId",
+                  "latitude.$": "$.latitude",
+                  "longitude.$": "$.longitude"
+                }
+              },
+              "ResultSelector": {
+                "geoResult.$": "$.Payload"
+              },
+              "ResultPath": "$.geoOutput",
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 1
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.geoError",
+                  "Next": "GeoVerificationFallback"
+                }
+              ],
+              "End": true
+            },
+            "GeoVerificationFallback": {
+              "Type": "Pass",
+              "Result": {
+                "geoOutput": { "geoResult": { "success": false, "confidence": 0, "reason": "geo_verification_error" } }
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "VoiceVerification",
+          "States": {
+            "VoiceVerification": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${AttendanceProcessorArn}",
+                "Payload": {
+                  "task": "voice_verify",
+                  "workerId.$": "$.workerId",
+                  "voiceTranscription.$": "$.voiceTranscription",
+                  "language.$": "$.language"
+                }
+              },
+              "ResultSelector": {
+                "voiceResult.$": "$.Payload"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": ["States.TaskFailed"],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 1
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "ResultPath": "$.voiceError",
+                  "Next": "VoiceVerificationFallback"
+                }
+              ],
+              "End": true
+            },
+            "VoiceVerificationFallback": {
+              "Type": "Pass",
+              "Result": {
+                "voiceResult": { "success": false, "confidence": 50, "reason": "voice_verification_error" }
+              },
+              "End": true
+            }
+          }
+        }
+      ],
+      "ResultPath": "$.verificationResults",
+      "Next": "MergeAndDecide"
+    },
+
+    "MergeAndDecide": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${AttendanceProcessorArn}",
+        "Payload": {
+          "task": "merge_decision",
+          "workerId.$": "$.workerId",
+          "language.$": "$.language",
+          "faceResult.$": "$.verificationResults[0].faceResult",
+          "geoResult.$": "$.verificationResults[0].geoOutput.geoResult",
+          "voiceResult.$": "$.verificationResults[1].voiceResult"
+        }
+      },
+      "ResultSelector": {
+        "decision.$": "$.Payload"
+      },
+      "ResultPath": "$.mergeResult",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 1
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "HandleError",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "RouteNotification"
+    },
+
+    "RouteNotification": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.mergeResult.decision.status",
+          "StringEquals": "auto_approved",
+          "Next": "NotifyApproved"
+        },
+        {
+          "Variable": "$.mergeResult.decision.status",
+          "StringEquals": "rejected",
+          "Next": "NotifyRejected"
+        },
+        {
+          "Variable": "$.mergeResult.decision.status",
+          "StringEquals": "duplicate",
+          "Next": "NotifyDuplicate"
+        }
+      ],
+      "Default": "NotifyPendingReview"
+    },
+
+    "NotifyApproved": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationSenderArn}",
+        "Payload": {
+          "workerId.$": "$.workerId",
+          "notificationType": "attendance_confirmed",
+          "result.$": "$.mergeResult.decision"
+        }
+      },
+      "ResultPath": "$.notificationResult",
+      "Next": "CheckCertificateEligibility",
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "Next": "Done", "ResultPath": "$.notifyError" }]
+    },
+
+    "CheckCertificateEligibility": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.mergeResult.decision.certificateEligible",
+          "BooleanEquals": true,
+          "Next": "TriggerCertificateFlow"
+        }
+      ],
+      "Default": "Done"
+    },
+
+    "TriggerCertificateFlow": {
+      "Type": "Pass",
+      "Comment": "Placeholder: In production, this starts the CertificateFlow state machine",
+      "Result": { "certificateTriggered": true },
+      "ResultPath": "$.certificateResult",
+      "End": true
+    },
+
+    "NotifyRejected": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationSenderArn}",
+        "Payload": {
+          "workerId.$": "$.workerId",
+          "notificationType": "attendance_rejected",
+          "result.$": "$.mergeResult.decision"
+        }
+      },
+      "ResultPath": "$.notificationResult",
+      "End": true,
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "Next": "Done", "ResultPath": "$.notifyError" }]
+    },
+
+    "NotifyPendingReview": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationSenderArn}",
+        "Payload": {
+          "workerId.$": "$.workerId",
+          "notificationType": "attendance_pending",
+          "result.$": "$.mergeResult.decision"
+        }
+      },
+      "ResultPath": "$.notificationResult",
+      "End": true,
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "Next": "Done", "ResultPath": "$.notifyError" }]
+    },
+
+    "NotifyDuplicate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationSenderArn}",
+        "Payload": {
+          "workerId.$": "$.workerId",
+          "notificationType": "attendance_duplicate",
+          "messageText": "Aapki aaj ki attendance pehle se log ho chuki hai."
+        }
+      },
+      "ResultPath": "$.notificationResult",
+      "End": true,
+      "Catch": [{ "ErrorEquals": ["States.ALL"], "Next": "Done", "ResultPath": "$.notifyError" }]
+    },
+
+    "HandleError": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${NotificationSenderArn}",
+        "Payload": {
+          "workerId.$": "$.workerId",
+          "notificationType": "error",
+          "error.$": "$.error"
+        }
+      },
+      "ResultPath": "$.errorNotification",
+      "Next": "FailState"
+    },
+
+    "FailState": {
+      "Type": "Fail",
+      "Error": "AttendanceProcessingError",
+      "Cause": "An error occurred during attendance Triple Verification"
+    },
+
+    "InvalidInput": {
+      "Type": "Fail",
+      "Error": "InvalidInput",
+      "Cause": "Missing required fields: workerId, selfieKey"
+    },
+
+    "Done": {
+      "Type": "Succeed"
+    }
+  }
+}
