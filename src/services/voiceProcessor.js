@@ -1,16 +1,17 @@
 /**
  * Nirman Mitra — Voice Processor Service
- * Voice pipeline: STT provider chain → language detection → Polly TTS.
+ * Voice pipeline: STT provider chain → language detection → ElevenLabs TTS (Polly fallback).
  * Voice-first, zero literacy required.
  */
 
 import { PollyClient, SynthesizeSpeechCommand } from '@aws-sdk/client-polly';
 import config, { isDemoMode } from '../utils/config.js';
 import { complete } from '../providers/llm.js';
-import { uploadProcessedAudio, uploadWorkerMedia, downloadFromS3 } from '../utils/s3.js';
+import { uploadProcessedAudio, uploadWorkerMedia, downloadFromS3, uploadToS3 } from '../utils/s3.js';
 import { generatePresignedUrl } from '../utils/s3.js';
 import { withRetry } from '../utils/retryHelper.js';
 import { transcribe } from '../providers/stt.js';
+import { hasElevenLabsVoice, elevenLabsSpeak, ttsCacheKey } from '../providers/tts.js';
 import { KN } from '../utils/i18n.js';
 
 const pollyClient = new PollyClient({ region: config.aws.region });
@@ -183,17 +184,51 @@ export function hasPollyVoice(languageCode) {
   return Boolean(config.pollyVoices[languageCode]);
 }
 
+/** Whether a reply in this language can be spoken (ElevenLabs voice or Polly voice) */
+export function hasVoice(languageCode) {
+  return hasElevenLabsVoice(languageCode) || hasPollyVoice(languageCode);
+}
+
 /**
- * Generate voice response, upload to S3, and return a pre-signed URL
+ * Speak text with ElevenLabs through the content-addressed S3 cache.
+ * @returns {Promise<string|null>} Pre-signed URL, or null when ElevenLabs failed
+ */
+async function elevenLabsVoiceUrl(text, languageCode) {
+  const bucket = config.buckets.mediaProcessed;
+  const key = ttsCacheKey(text, languageCode);
+  // The local mock S3 answers every GET with a placeholder, so the cache is only read on AWS
+  if (!isDemoMode()) {
+    const cached = await downloadFromS3(bucket, key).catch(() => null);
+    if (cached?.length) return generatePresignedUrl(bucket, key, 3600);
+  }
+  try {
+    const audio = await elevenLabsSpeak(text, languageCode);
+    if (!audio.length) return null;
+    await uploadToS3(bucket, key, audio, 'audio/mpeg', { audio_type: 'tts-cache' });
+    return generatePresignedUrl(bucket, key, 3600);
+  } catch (err) {
+    console.error('ElevenLabs TTS failed:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Generate voice response, upload to S3, and return a pre-signed URL.
+ * ElevenLabs speaks every language it has a voice for (including Kannada); Polly is the fallback
+ * for Hindi and English.
  * @param {string} workerId
  * @param {string} text - Text to speak
  * @param {string} languageCode
  * @param {string} label - e.g. 'greeting', 'confirmation'
  * @returns {Promise<string|null>} Pre-signed URL to the audio file, or null when there is no
- *   voice for the language or Polly failed
+ *   voice for the language or synthesis failed
  */
 export async function generateAndUploadVoice(workerId, text, languageCode, label) {
-  if (!hasPollyVoice(languageCode)) return null; // text-only reply (e.g. Kannada)
+  if (hasElevenLabsVoice(languageCode)) {
+    const url = await elevenLabsVoiceUrl(text, languageCode);
+    if (url) return url;
+  }
+  if (!hasPollyVoice(languageCode)) return null; // text-only reply
   const audioBuffer = await generateVoiceResponse(text, languageCode);
 
   if (audioBuffer.length === 0) {
@@ -289,6 +324,7 @@ export default {
   generateVoiceResponse,
   generateAndUploadVoice,
   hasPollyVoice,
+  hasVoice,
   invokeLLM,
   getGreetingMessage,
   getStepPrompt,

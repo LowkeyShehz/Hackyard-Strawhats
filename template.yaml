@@ -80,6 +80,11 @@ Parameters:
     NoEcho: true
     Description: ElevenLabs API key for Scribe speech-to-text and text-to-speech
 
+  ElevenLabsVoiceIds:
+    Type: String
+    Default: ''
+    Description: 'JSON map of language code to ElevenLabs voice ID, e.g. {"kn":"...","hi":"...","default":"..."}'
+
   LlmProvider:
     Type: String
     Default: 'nodus'
@@ -158,6 +163,8 @@ Globals:
         NODUS_API_KEY: !Ref NodusApiKey
         ELEVENLABS_API_KEY: !Ref ElevenLabsApiKey
         STT_PROVIDERS: 'nodus,elevenlabs,groq'
+        ELEVENLABS_VOICE_IDS: !Ref ElevenLabsVoiceIds
+        ELEVENLABS_TTS_MODEL: eleven_v3
         LEX_BOT_ID: ''
         LEX_BOT_ALIAS_ID: ''
         LEX_LOCALE_ID: 'en_US'

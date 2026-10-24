@@ -62,6 +62,8 @@ export const nodus = { calls: [], requests: [], fail: false };
 export const transcribe = { text: 'aaj maine teesri manzil pe plaster kiya', fail: false, jobs: [] };
 // Nodus and ElevenLabs speech-to-text: each call is recorded; failProviders makes one return 500
 export const stt = { calls: [], failProviders: new Set() };
+// ElevenLabs text-to-speech: each call is recorded as { voiceId, body }
+export const elevenTts = { calls: [], fail: false };
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, opts) => {
   url = String(url);
@@ -76,6 +78,12 @@ globalThis.fetch = async (url, opts) => {
   }
   const sttProvider = url.includes('inference.nodus-compute.ai/v1/audio/transcriptions') ? 'nodus'
     : url.includes('api.elevenlabs.io/v1/speech-to-text') ? 'elevenlabs' : null;
+  const ttsMatch = url.match(/api\.elevenlabs\.io\/v1\/text-to-speech\/([^?]+)/);
+  if (ttsMatch) {
+    elevenTts.calls.push({ voiceId: decodeURIComponent(ttsMatch[1]), body: JSON.parse(opts.body), headers: opts.headers });
+    if (elevenTts.fail) return new Response('quota exceeded', { status: 401 });
+    return new Response(Buffer.from('ID3eleven'), { status: 200, headers: { 'content-type': 'audio/mpeg' } });
+  }
   if (sttProvider) {
     stt.calls.push({ provider: sttProvider, headers: opts.headers, form: Object.fromEntries([...opts.body.entries()].filter(([k]) => k !== 'file')) });
     if (stt.failProviders.has(sttProvider)) return new Response('unavailable', { status: 500 });

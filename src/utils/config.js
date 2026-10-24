@@ -12,6 +12,18 @@ function parseCertificateThreshold(raw = '3') {
   return 90;
 }
 
+/** ELEVENLABS_VOICE_IDS is JSON such as {"kn":"<voice id>","default":"<voice id>"} */
+function parseVoiceIds(raw) {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    console.error('[Config] ELEVENLABS_VOICE_IDS is not valid JSON; ElevenLabs TTS disabled');
+    return {};
+  }
+}
+
 const config = Object.freeze({
   // Environment
   environment: process.env.ENVIRONMENT || 'dev',
@@ -129,9 +141,12 @@ const config = Object.freeze({
     elevenLabsModel: process.env.ELEVENLABS_STT_MODEL || 'scribe_v1',
   },
 
-  // ElevenLabs (speech-to-text fallback and text-to-speech)
+  // ElevenLabs (speech-to-text fallback and text-to-speech). voiceIds maps a language code (or
+  // "default") to a voice ID; languages without a voice fall back to Polly or text-only replies.
   elevenLabs: {
     apiKey: process.env.ELEVENLABS_API_KEY || '',
+    ttsModel: process.env.ELEVENLABS_TTS_MODEL || 'eleven_v3',
+    voiceIds: parseVoiceIds(process.env.ELEVENLABS_VOICE_IDS),
   },
 
   // Polly language → voice mapping. Polly's only Indian voices are hi-IN and en-IN (Kajal,
