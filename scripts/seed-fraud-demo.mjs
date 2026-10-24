@@ -7,8 +7,10 @@
  *   node scripts/seed-fraud-demo.mjs --clean   delete everything this script wrote
  *   node scripts/seed-fraud-demo.mjs --json    print the items instead of writing them
  *
- * AWS credentials come from the environment (the RenderRuntimeUser key works). Tables are
- * WORKERS_TABLE / ATTENDANCE_TABLE, defaulting to the -dev tables, in AWS_REGION.
+ * Writes go through the app's data helpers, so DB_BACKEND picks the database:
+ *   DB_BACKEND=postgres DATABASE_URL=<Render external URL> node scripts/seed-fraud-demo.mjs
+ *   DB_BACKEND=dynamodb (with AWS credentials in the environment) for the Lambda stack
+ * Tables are WORKERS_TABLE / ATTENDANCE_TABLE, defaulting to the -dev names.
  *
  * One scenario per detector in nodus/fraud_core.py, all inside the sweep's 14-day window:
  *   farm    4 workers in one 11 m cell within 45 s         -> detect_phone_farms         (4 logs)
@@ -20,12 +22,7 @@
  * non-dialable 9100000000xx numbers and no next_reminder_time, so nothing is ever sent to them.
  */
 import crypto from 'crypto';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, PutCommand, QueryCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
 
-const WORKERS_TABLE = process.env.WORKERS_TABLE || 'NirmanMitra-Workers-dev';
-const ATTENDANCE_TABLE = process.env.ATTENDANCE_TABLE || 'NirmanMitra-AttendanceLogs-dev';
-const REGION = process.env.AWS_REGION || 'ap-south-1';
 const SEED_TAG = 'fraud-demo';
 
 const SITES = {
@@ -189,36 +186,36 @@ async function main() {
     return;
   }
 
-  const db = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }), {
-    marshallOptions: { removeUndefinedValues: true },
-  });
-  console.log(`Region ${REGION}; tables ${WORKERS_TABLE}, ${ATTENDANCE_TABLE}`);
+  if (mode && mode !== '--clean') {
+    console.error('Usage: node scripts/seed-fraud-demo.mjs [--clean | --json]');
+    process.exit(1);
+  }
+
+  // Loaded only when writing, so --json works without any database configured
+  const { default: config } = await import('../src/utils/config.js');
+  if (config.dbBackend === 'memory') {
+    console.error('Set DB_BACKEND (postgres or dynamodb): the in-memory demo store does not persist');
+    process.exit(1);
+  }
+  const db = await import('../src/utils/dynamodb.js');
+  const { workers: WORKERS_TABLE, attendance: ATTENDANCE_TABLE } = config.tables;
+  console.log(`Backend ${config.dbBackend}; tables ${WORKERS_TABLE}, ${ATTENDANCE_TABLE}`);
 
   if (mode === '--clean') {
     let removed = 0;
     for (const w of workers) {
-      const { Items = [] } = await db.send(new QueryCommand({
-        TableName: ATTENDANCE_TABLE,
-        KeyConditionExpression: 'worker_id = :w',
-        ExpressionAttributeValues: { ':w': w.worker_id },
-      }));
-      for (const log of Items) {
-        await db.send(new DeleteCommand({ TableName: ATTENDANCE_TABLE, Key: { worker_id: log.worker_id, log_date: log.log_date } }));
+      for (const log of await db.getWorkerAttendanceLogs(w.worker_id)) {
+        await db.deleteItem(ATTENDANCE_TABLE, { worker_id: log.worker_id, log_date: log.log_date });
         removed++;
       }
-      await db.send(new DeleteCommand({ TableName: WORKERS_TABLE, Key: { worker_id: w.worker_id } }));
+      await db.deleteItem(WORKERS_TABLE, { worker_id: w.worker_id });
     }
     console.log(`Removed ${workers.length} demo workers and ${removed} check-ins`);
     return;
   }
 
-  if (mode) {
-    console.error('Usage: node scripts/seed-fraud-demo.mjs [--clean | --json]');
-    process.exit(1);
-  }
-
-  for (const w of workers) await db.send(new PutCommand({ TableName: WORKERS_TABLE, Item: w }));
-  for (const log of logs) await db.send(new PutCommand({ TableName: ATTENDANCE_TABLE, Item: log }));
+  for (const w of workers) await db.putItem(WORKERS_TABLE, w);
+  for (const log of logs) await db.putItem(ATTENDANCE_TABLE, log);
 
   const byScenario = logs.reduce((acc, l) => ({ ...acc, [l.demo_scenario]: (acc[l.demo_scenario] || 0) + 1 }), {});
   console.log(`Seeded ${workers.length} workers and ${logs.length} check-ins:`, byScenario);
@@ -226,3 +223,4 @@ async function main() {
 }
 
 await main();
+if (process.env.DB_BACKEND === 'postgres') await (await import('../src/utils/postgres.js')).closePostgres();

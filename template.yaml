@@ -998,8 +998,9 @@ Resources:
 
   # ─────────────────────────────────────────────────────────
   # RENDER RUNTIME ACCESS
-  # The API and cron job on Render (render.yaml) use this user's access key: the tables, buckets
-  # and AI services the handlers call, nothing else. Create the key once with
+  # The API on Render (render.yaml) keeps its data in Render Postgres and its files on a Render
+  # disk; the one AWS call left is Rekognition face matching, and this user may make only that.
+  # Create the key once with
   #   aws iam create-access-key --user-name <RenderRuntimeUserName output>
   # ─────────────────────────────────────────────────────────
 
@@ -1012,51 +1013,16 @@ Resources:
   RenderRuntimePolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
-      Description: Runtime access for the Nirman Mitra services on Render
+      Description: Rekognition face matching for the Nirman Mitra API on Render
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Effect: Allow
-            Action:
-              - dynamodb:GetItem
-              - dynamodb:PutItem
-              - dynamodb:UpdateItem
-              - dynamodb:DeleteItem
-              - dynamodb:Query
-              - dynamodb:Scan
-            Resource:
-              - !GetAtt WorkersTable.Arn
-              - !Sub '${WorkersTable.Arn}/index/*'
-              - !GetAtt AttendanceLogsTable.Arn
-              - !Sub '${AttendanceLogsTable.Arn}/index/*'
-              - !GetAtt SitesTable.Arn
-              - !Sub '${SitesTable.Arn}/index/*'
-              - !GetAtt CertificatesTable.Arn
-              - !Sub '${CertificatesTable.Arn}/index/*'
-              - !GetAtt DocumentsTable.Arn
-              - !GetAtt ConversationStateTable.Arn
-              - !GetAtt BedrockCacheTable.Arn
-              - !GetAtt AdminUsersTable.Arn
-              - !Sub '${AdminUsersTable.Arn}/index/*'
-              - !GetAtt RefreshTokensTable.Arn
-          # Audit log is append-only, as for the Lambdas
-          - Effect: Allow
-            Action: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:Query]
-            Resource: !GetAtt AuditLogTable.Arn
-          - Effect: Allow
-            Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
-            Resource:
-              - !Sub '${MediaRawBucket.Arn}/*'
-              - !Sub '${MediaProcessedBucket.Arn}/*'
-              - !Sub '${CertificatesBucket.Arn}/*'
           - Effect: Allow
             Action:
               - rekognition:CompareFaces
               - rekognition:IndexFaces
               - rekognition:DeleteFaces
               - rekognition:CreateCollection
-              - textract:AnalyzeDocument
-              - polly:SynthesizeSpeech
             Resource: '*'
 
   # ─────────────────────────────────────────────────────────

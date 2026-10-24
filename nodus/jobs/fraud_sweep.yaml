@@ -1,15 +1,18 @@
 # Nightly fraud sweep on Nodus.
-#   nodus secret create nirman-aws --from-env-file aws.env   (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+#   nodus secret create nirman-db --from-env-file db.env   (DATABASE_URL: the Render Postgres
+#                                                           external connection string)
 #   nodus apply -f nodus/jobs/fraud_sweep.yaml
 #   nodus cp job/nirman-fraud-sweep:outputs/report ./report.json
-# The AWS key needs only dynamodb:Scan on both tables and dynamodb:UpdateItem on AttendanceLogs.
+# For the DynamoDB (Lambda) deployment, use a secret with AWS_ACCESS_KEY_ID and
+# AWS_SECRET_ACCESS_KEY instead; that key needs only dynamodb:Scan on both tables and
+# dynamodb:UpdateItem on AttendanceLogs.
 apiVersion: nodus.dev/v1
 kind: Job
 metadata:
   name: nirman-fraud-sweep
 spec:
   image: nodus/pytorch
-  secrets: [nirman-aws]
+  secrets: [nirman-db]
   env:
     - name: AWS_REGION
       value: ap-south-1
@@ -22,7 +25,7 @@ spec:
   command:
     - sh
     - -c
-    - cd nodus && pip install -q numpy pillow boto3 && python sweep.py
+    - cd nodus && pip install -q numpy pillow boto3 "psycopg[binary]" && python sweep.py
   resources:
     cpu: 2
     memory: 4Gi
