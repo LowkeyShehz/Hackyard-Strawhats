@@ -74,6 +74,12 @@ Parameters:
     NoEcho: true
     Description: Nodus Compute API key (scope inference:invoke) for LLM and speech-to-text
 
+  ElevenLabsApiKey:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: ElevenLabs API key for Scribe speech-to-text and text-to-speech
+
   LlmProvider:
     Type: String
     Default: 'nodus'
@@ -150,6 +156,8 @@ Globals:
         LLM_MODEL: !Ref LlmModel
         GROQ_API_KEY: !Ref GroqApiKey
         NODUS_API_KEY: !Ref NodusApiKey
+        ELEVENLABS_API_KEY: !Ref ElevenLabsApiKey
+        STT_PROVIDERS: 'nodus,elevenlabs,groq'
         LEX_BOT_ID: ''
         LEX_BOT_ALIAS_ID: ''
         LEX_LOCALE_ID: 'en_US'

@@ -120,6 +120,20 @@ const config = Object.freeze({
     nodusBaseUrl: (process.env.NODUS_BASE_URL || 'https://inference.nodus-compute.ai/v1').replace(/\/+$/, ''),
   },
 
+  // Speech-to-text chain (see src/providers/stt.js), tried in order; providers without a key are
+  // skipped
+  stt: {
+    providers: (process.env.STT_PROVIDERS || 'nodus,elevenlabs,groq')
+      .split(',').map((p) => p.trim().toLowerCase()).filter(Boolean),
+    nodusModel: process.env.NODUS_STT_MODEL || 'openai/whisper-large-v3',
+    elevenLabsModel: process.env.ELEVENLABS_STT_MODEL || 'scribe_v1',
+  },
+
+  // ElevenLabs (speech-to-text fallback and text-to-speech)
+  elevenLabs: {
+    apiKey: process.env.ELEVENLABS_API_KEY || '',
+  },
+
   // Polly language → voice mapping. Polly's only Indian voices are hi-IN and en-IN (Kajal,
   // Aditi, Raveena); there is no Kannada, Tamil, Telugu, Malayalam, Bengali, Marathi or Gujarati
   // voice (https://docs.aws.amazon.com/polly/latest/dg/available-voices.html). Languages not

@@ -60,6 +60,8 @@ export const llm = { calls: [], requests: [], responder: defaultLlmResponder };
 // Nodus inference: chat completions answer with llm.responder unless nodus.fail is set
 export const nodus = { calls: [], requests: [], fail: false };
 export const transcribe = { text: 'aaj maine teesri manzil pe plaster kiya', fail: false, jobs: [] };
+// Nodus and ElevenLabs speech-to-text: each call is recorded; failProviders makes one return 500
+export const stt = { calls: [], failProviders: new Set() };
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, opts) => {
   url = String(url);
@@ -70,6 +72,13 @@ globalThis.fetch = async (url, opts) => {
     // The test expects: H.transcribe.jobs.at(-1).Media.MediaFileUri.includes(`workers/${wid}/`)
     // But Whisper doesn't use S3 URI, it uses FormData. We can fake the job object to satisfy the test.
     transcribe.jobs.push({ Media: { MediaFileUri: 'workers/temp/' } }); 
+    return new Response(JSON.stringify({ text: transcribe.text }), { status: 200 });
+  }
+  const sttProvider = url.includes('inference.nodus-compute.ai/v1/audio/transcriptions') ? 'nodus'
+    : url.includes('api.elevenlabs.io/v1/speech-to-text') ? 'elevenlabs' : null;
+  if (sttProvider) {
+    stt.calls.push({ provider: sttProvider, headers: opts.headers, form: Object.fromEntries([...opts.body.entries()].filter(([k]) => k !== 'file')) });
+    if (stt.failProviders.has(sttProvider)) return new Response('unavailable', { status: 500 });
     return new Response(JSON.stringify({ text: transcribe.text }), { status: 200 });
   }
   if (url.includes('inference.nodus-compute.ai/v1/chat/completions')) {

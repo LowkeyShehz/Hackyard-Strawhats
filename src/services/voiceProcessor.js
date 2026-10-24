@@ -1,6 +1,6 @@
 /**
  * Nirman Mitra — Voice Processor Service
- * Voice pipeline: Transcribe STT → language detection → Polly TTS.
+ * Voice pipeline: STT provider chain → language detection → Polly TTS.
  * Voice-first, zero literacy required.
  */
 
@@ -10,6 +10,7 @@ import { complete } from '../providers/llm.js';
 import { uploadProcessedAudio, uploadWorkerMedia, downloadFromS3 } from '../utils/s3.js';
 import { generatePresignedUrl } from '../utils/s3.js';
 import { withRetry } from '../utils/retryHelper.js';
+import { transcribe } from '../providers/stt.js';
 import { KN } from '../utils/i18n.js';
 
 const pollyClient = new PollyClient({ region: config.aws.region });
@@ -104,12 +105,9 @@ export function parseLanguageSwitch(text) {
 // Voice Transcription
 // ─────────────────────────────────────────────────────────
 
-// Language mapping is simplified as Whisper generally accepts ISO 639-1 ('hi', 'en', 'kn', etc)
-// Groq Whisper API endpoint will be used for fast processing.
-
 /**
- * Transcribe a voice note to text using Groq Whisper.
- * Uploads audio to S3, then directly posts to Groq API.
+ * Transcribe a voice note to text with the STT provider chain (Nodus → ElevenLabs → Groq).
+ * Uploads the audio to S3 for auditing first.
  * @param {Buffer} audioBuffer - Audio file buffer (ogg/wav/mp3)
  * @param {string} language - ISO 639-1 code
  * @param {string} [workerId] - Worker ID for S3 path
@@ -126,48 +124,15 @@ export async function transcribeVoice(audioBuffer, language = 'hi', workerId = '
     return '';
   }
 
-  try {
-    // Step 1: Upload audio to S3 for auditing (don't block transcription on it though we await it)
-    await uploadWorkerMedia(workerId, 'voice-note', audioBuffer, 'audio/ogg').catch(e => console.error('[S3] Upload failed:', e));
+  await uploadWorkerMedia(workerId, 'voice-note', audioBuffer, 'audio/ogg').catch(e => console.error('[S3] Upload failed:', e));
 
-    // Step 2: Use native fetch + FormData for Node to hit Groq Whisper
-    const blob = new Blob([audioBuffer], { type: 'audio/ogg' });
-    const formData = new FormData();
-    formData.append('file', blob, 'audio.ogg');
-    formData.append('model', 'whisper-large-v3-turbo'); 
-    formData.append('language', language);
-    formData.append('response_format', 'json');
-
-    const groqKey = config.llm.groqApiKey;
-    if (!groqKey) throw new Error('GROQ_API_KEY is not set');
-
-    const result = await withRetry(async () => {
-      const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${groqKey}`
-        },
-        body: formData
-      });
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Groq API error ${response.status}: ${errText}`);
-      }
-      return response.json();
-    }, { label: 'Groq:Whisper' });
-
-    const transcript = result?.text || '';
-
-    if (transcript) {
-      console.log(`[Whisper] Result: "${transcript.substring(0, 100)}"`);
-    } else {
-      console.warn('[Whisper] No transcript produced');
-    }
-    return transcript;
-  } catch (err) {
-    console.error('Whisper failed:', err.message);
-    return '';
+  const { text, provider } = await transcribe(audioBuffer, language);
+  if (text) {
+    console.log(`[STT:${provider}] Result: "${text.substring(0, 100)}"`);
+  } else {
+    console.warn('[STT] No transcript produced by any provider');
   }
+  return text;
 }
 
 // ─────────────────────────────────────────────────────────
