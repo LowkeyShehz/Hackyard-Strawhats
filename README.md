@@ -12,7 +12,18 @@ Every attendance log is verified through three independent AI channels simultane
 |---|---|---|
 | **Face Match** | Amazon Rekognition | Buddy-punching, fake identities |
 | **Geo-Fence** | GPS + Site matching | Off-site check-ins, spoofing |
-| **Voice Intent** | Groq (Whisper + LLM) | Fake check-ins, scripted messages, unintelligible audio |
+| **Voice Intent** | Nodus inference (Whisper + gpt-oss-120b), Groq fallback | Fake check-ins, scripted messages, unintelligible audio |
+| **Fraud signals** | Nodus Compute (GPU function + nightly job) | Re-sent gallery selfies, photos of screens, mock GPS, phone farms, one person under two numbers |
+
+## Hackyard Build 2026: Sponsor Integrations
+
+| Sponsor | What it does in Nirman Mitra | Code |
+|---|---|---|
+| **Nodus Compute** | LLM and speech-to-text on Nodus inference. A GPU `analyze_selfie` function on every check-in (pHash + DINOv2 near-duplicate, FaceNet, screen recapture). A nightly fraud-sweep job for mock GPS, impossible travel, phone farms and shared faces | [`nodus/`](nodus/), [`src/providers/llm.js`](src/providers/llm.js), [`src/providers/stt.js`](src/providers/stt.js), [`src/services/fraudSignals.js`](src/services/fraudSignals.js) |
+| **ElevenLabs** | Spoken replies in every language with a voice, **including Kannada** (Polly has none). Scribe as STT fallback. The "Mitra Helpline" voice agent on WhatsApp/phone, with its LLM on Nodus | [`src/providers/tts.js`](src/providers/tts.js), [`agents/elevenlabs/`](agents/elevenlabs/), [`src/handlers/helplineRoutes.js`](src/handlers/helplineRoutes.js) |
+| **Agent37** | An always-on Welfare Ops Agent: AI triage notes on the review queue (recommendations only), a daily officer digest, and a weekly welfare-scheme refresh for the helpline | [`agents/agent37/`](agents/agent37/), [`src/handlers/agentRoutes.js`](src/handlers/agentRoutes.js) |
+
+See [docs/SPONSOR_PLAN.md](docs/SPONSOR_PLAN.md) for the plan and demo script.
 
 ### The Four Zeros
 
@@ -32,9 +43,13 @@ flowchart LR
     G --> H[Lambda: message handler]
     H --> R[Rekognition<br/>face 1:1]
     H --> T[Textract<br/>Aadhaar OCR]
-    H --> S[Groq Whisper<br/>STT]
-    H --> L[Groq LLM<br/>intent + voice checks]
-    H --> P[Polly<br/>spoken replies]
+    H --> S[Nodus Whisper<br/>STT, Scribe/Groq fallback]
+    H --> L[Nodus LLM<br/>intent + voice checks]
+    H --> P[ElevenLabs TTS<br/>spoken replies, Polly fallback]
+    H --> F[Nodus GPU function<br/>selfie fraud check]
+    J[Nodus nightly job<br/>fraud sweep] --> D
+    AG[Agent37 ops agent] --> G
+    EL[ElevenLabs helpline agent] --> G
     H --> D[(DynamoDB)]
     H --> B[(S3)]
     O[Officer / Admin browser] --> A[React dashboard<br/>on Amplify]
@@ -138,10 +153,15 @@ The project runs in demo mode by default if `ENVIRONMENT=dev`:
 nirman-mitra/
   ├── PRD.md                    # Product requirements and specs
   ├── template.yaml             # AWS SAM template (API, Lambdas, tables, buckets)
+  ├── docs/SPONSOR_PLAN.md      # Hackyard sponsor integration plan + demo script
+  ├── nodus/                    # Nodus Compute fraud function, nightly sweep job, HTTP bridge
+  ├── agents/
+  │   ├── agent37/              # Agent37 Welfare Ops Agent (triage, digest, instructions)
+  │   └── elevenlabs/           # ElevenLabs Mitra Helpline agent config + tool
   ├── src/
-  │   ├── handlers/             # Lambda entry points (webhook, attendance, certs, admin API)
+  │   ├── handlers/             # Lambda entry points (webhook, attendance, certs, admin, agent, helpline API)
   │   ├── services/             # Business logic (registration, document OCR, voice processing)
-  │   ├── providers/llm.js      # LLM provider interface (Groq API)
+  │   ├── providers/            # llm.js (Nodus → Groq), stt.js (Nodus → Scribe → Groq), tts.js (ElevenLabs)
   │   ├── middleware/auth.js    # JWT verification for the admin API
   │   ├── stepFunctions/        # AWS Step Functions state machine definitions (ASL)
   │   └── utils/                # Config, DynamoDB, S3, WhatsApp client, helpers

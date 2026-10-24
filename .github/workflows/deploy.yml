@@ -50,7 +50,7 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
       # Lambda packages are built from the repo root; keep non-runtime folders out of them
-      - run: rm -rf admin-dashboard tests scripts data
+      - run: rm -rf admin-dashboard tests scripts data nodus agents docs
       - run: sam build
       - name: sam deploy
         env:
@@ -59,13 +59,22 @@ jobs:
           WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
           WHATSAPP_APP_SECRET: ${{ secrets.WHATSAPP_APP_SECRET }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          NODUS_API_KEY: ${{ secrets.NODUS_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          FRAUD_SERVICE_TOKEN: ${{ secrets.FRAUD_SERVICE_TOKEN }}
+          GPS_HASH_KEY: ${{ secrets.GPS_HASH_KEY }}
+          AGENT_API_KEY_HASH: ${{ secrets.AGENT_API_KEY_HASH }}
+          HELPLINE_SECRET: ${{ secrets.HELPLINE_SECRET }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           JWT_REFRESH_SECRET: ${{ secrets.JWT_REFRESH_SECRET }}
           ADMIN_SEED_SECRET: ${{ secrets.ADMIN_SEED_SECRET }}
           DEMO_PHONE_NUMBERS: ${{ secrets.DEMO_PHONE_NUMBERS }}
           CREDENTIAL_SIGNING_KEY: ${{ secrets.CREDENTIAL_SIGNING_KEY }}
           PORTAL_URL: ${{ vars.PORTAL_URL }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
           LLM_MODEL: ${{ vars.LLM_MODEL }}
+          ELEVENLABS_VOICE_IDS: ${{ vars.ELEVENLABS_VOICE_IDS }}
+          FRAUD_SERVICE_URL: ${{ vars.FRAUD_SERVICE_URL }}
         run: |
           sam deploy \
             --stack-name "$STACK_NAME" --region "$AWS_REGION" \
@@ -83,7 +92,16 @@ jobs:
               "WhatsAppVerifyToken=$WHATSAPP_VERIFY_TOKEN" \
               "WhatsAppAppSecret=$WHATSAPP_APP_SECRET" \
               "GroqApiKey=$GROQ_API_KEY" \
-              "LlmModel=${LLM_MODEL:-openai/gpt-oss-120b}" \
+              "NodusApiKey=$NODUS_API_KEY" \
+              "LlmProvider=${LLM_PROVIDER:-nodus}" \
+              "LlmModel=${LLM_MODEL:-nodus/gpt-oss-120b}" \
+              "ElevenLabsApiKey=$ELEVENLABS_API_KEY" \
+              "ElevenLabsVoiceIds=$ELEVENLABS_VOICE_IDS" \
+              "FraudServiceUrl=$FRAUD_SERVICE_URL" \
+              "FraudServiceToken=$FRAUD_SERVICE_TOKEN" \
+              "GpsHashKey=$GPS_HASH_KEY" \
+              "AgentApiKeyHash=$AGENT_API_KEY_HASH" \
+              "HelplineSecret=$HELPLINE_SECRET" \
               "JwtSecret=$JWT_SECRET" \
               "JwtRefreshSecret=$JWT_REFRESH_SECRET" \
               "AdminSeedSecret=$ADMIN_SEED_SECRET"
