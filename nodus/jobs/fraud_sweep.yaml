@@ -1,0 +1,33 @@
+# Nightly fraud sweep on Nodus.
+#   nodus secret create nirman-aws --from-env-file aws.env   (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+#   nodus apply -f nodus/jobs/fraud_sweep.yaml
+#   nodus cp job/nirman-fraud-sweep:outputs/report ./report.json
+# The AWS key needs only dynamodb:Scan on both tables and dynamodb:UpdateItem on AttendanceLogs.
+apiVersion: nodus.dev/v1
+kind: Job
+metadata:
+  name: nirman-fraud-sweep
+spec:
+  image: nodus/pytorch
+  secrets: [nirman-aws]
+  env:
+    - name: AWS_REGION
+      value: ap-south-1
+    - name: ATTENDANCE_TABLE
+      value: NirmanMitra-AttendanceLogs-prod
+    - name: WORKERS_TABLE
+      value: NirmanMitra-Workers-prod
+    - name: SWEEP_DAYS
+      value: "14"
+  command:
+    - sh
+    - -c
+    - cd nodus && pip install -q numpy pillow boto3 && python sweep.py
+  resources:
+    cpu: 2
+    memory: 4Gi
+  timeout: 20m
+  maxCostUSD: "0.50"
+  outputs:
+    - name: report
+      path: /nodus/outputs/report.json
