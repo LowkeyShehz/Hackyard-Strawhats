@@ -107,11 +107,17 @@ const config = Object.freeze({
     region: process.env.AWS_REGION || 'ap-south-1',
   },
 
-  // LLM provider (see src/providers/llm.js)
+  // LLM provider (see src/providers/llm.js). The fallback provider is tried once when the
+  // primary fails; it defaults to Groq when Nodus is primary.
   llm: {
     provider: process.env.LLM_PROVIDER || 'groq',
     model: process.env.LLM_MODEL || 'openai/gpt-oss-120b',
+    fallbackProvider: process.env.LLM_FALLBACK_PROVIDER
+      ?? (process.env.LLM_PROVIDER === 'nodus' ? 'groq' : ''),
+    fallbackModel: process.env.LLM_FALLBACK_MODEL || 'openai/gpt-oss-120b',
     groqApiKey: process.env.GROQ_API_KEY || '',
+    nodusApiKey: process.env.NODUS_API_KEY || '',
+    nodusBaseUrl: (process.env.NODUS_BASE_URL || 'https://inference.nodus-compute.ai/v1').replace(/\/+$/, ''),
   },
 
   // Polly language → voice mapping. Polly's only Indian voices are hi-IN and en-IN (Kajal,

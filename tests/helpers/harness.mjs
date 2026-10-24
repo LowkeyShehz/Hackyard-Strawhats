@@ -1,7 +1,7 @@
 // Test harness: runs the real handlers on the Lambda code path with every external service faked.
 // AWS SDK clients are mocked with aws-sdk-client-mock over an in-memory DynamoDB/S3 that follows
 // the key schemas in template.yaml; the WhatsApp Graph API is a local HTTP server
-// (WHATSAPP_API_URL); Groq calls are served by a patched fetch.
+// (WHATSAPP_API_URL); Groq and Nodus inference calls are served by a patched fetch.
 // Import it before any src/ module: it sets process.env first.
 import http from 'http';
 import crypto from 'crypto';
@@ -57,6 +57,8 @@ export const defaultLlmResponder = (prompt) => (prompt.includes('voice note')
   ? JSON.stringify({ is_work_related: true, activity: 'plaster', location_mention: '3rd floor', confidence: 90, passcode_match: true })
   : JSON.stringify({ intent: 'help', confidence: 80, passcode_match: true }));
 export const llm = { calls: [], requests: [], responder: defaultLlmResponder };
+// Nodus inference: chat completions answer with llm.responder unless nodus.fail is set
+export const nodus = { calls: [], requests: [], fail: false };
 export const transcribe = { text: 'aaj maine teesri manzil pe plaster kiya', fail: false, jobs: [] };
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, opts) => {
@@ -69,6 +71,14 @@ globalThis.fetch = async (url, opts) => {
     // But Whisper doesn't use S3 URI, it uses FormData. We can fake the job object to satisfy the test.
     transcribe.jobs.push({ Media: { MediaFileUri: 'workers/temp/' } }); 
     return new Response(JSON.stringify({ text: transcribe.text }), { status: 200 });
+  }
+  if (url.includes('inference.nodus-compute.ai/v1/chat/completions')) {
+    const body = JSON.parse(opts.body);
+    nodus.requests.push({ body, headers: opts.headers });
+    if (nodus.fail) return new Response(JSON.stringify({ error: { code: 'unavailable', message: 'beta capacity' } }), { status: 503 });
+    const prompt = body.messages.at(-1).content;
+    nodus.calls.push(prompt);
+    return new Response(JSON.stringify({ choices: [{ message: { content: llm.responder(prompt) } }] }), { status: 200 });
   }
   if (url.includes('api.groq.com/openai/v1/chat/completions')) {
     const body = JSON.parse(opts.body);

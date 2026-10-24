@@ -1,8 +1,9 @@
 /**
  * Nirman Mitra — LLM Provider Interface
  * Single entry point for all LLM calls: complete({ system, prompt, json }).
- * Provider selected by LLM_PROVIDER (currently: 'groq'; default model openai/gpt-oss-120b). Responses cached in the
- * LLM response cache DynamoDB table.
+ * Provider selected by LLM_PROVIDER ('nodus' or 'groq'). Both speak the OpenAI chat completions
+ * API; when the primary fails the call is retried once on LLM_FALLBACK_PROVIDER. Responses cached
+ * in the LLM response cache DynamoDB table.
  *
  * Usage:
  *   import { complete } from '../providers/llm.js';
@@ -67,18 +68,17 @@ async function cachePut(hash, responseText, ttlSeconds) {
 // Providers
 // ─────────────────────────────────────────────────────────
 
-/** Groq — OpenAI-compatible chat completions */
-async function groqComplete({ system, prompt, json, maxTokens, model }) {
-  const apiKey = config.llm.groqApiKey;
+/** Any OpenAI-compatible chat completions endpoint (Nodus inference, Groq) */
+async function openAiCompatibleComplete({ label, url, apiKey, keyEnv, system, prompt, json, maxTokens, model }) {
   if (!apiKey || apiKey === 'PLACEHOLDER_FILL_ME') {
-    throw new Error('GROQ_API_KEY is not configured');
+    throw new Error(`${keyEnv} is not configured`);
   }
 
   const messages = [];
   if (system) messages.push({ role: 'system', content: system });
   messages.push({ role: 'user', content: prompt });
 
-  const reasons = model.startsWith('openai/gpt-oss');
+  const reasons = model.includes('gpt-oss');
   const body = {
     model,
     messages,
@@ -89,7 +89,7 @@ async function groqComplete({ system, prompt, json, maxTokens, model }) {
     ...(reasons && { reasoning_effort: 'low' }),
   };
 
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+  const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -100,16 +100,39 @@ async function groqComplete({ system, prompt, json, maxTokens, model }) {
   });
 
   if (!res.ok) {
-    // Groq's error code and reason (never the prompt) so failures are diagnosable from the logs
+    // The provider's error code and reason (never the prompt) so failures are diagnosable from the logs
     const error = await res.json().then((b) => b.error, () => null);
     const detail = error ? ` ${error.code || error.type}: ${error.failed_generation || error.message}` : '';
-    throw new Error(`Groq request failed: HTTP ${res.status}${detail}`.slice(0, 300));
+    throw new Error(`${label} request failed: HTTP ${res.status}${detail}`.slice(0, 300));
   }
   const data = await res.json();
   return data.choices?.[0]?.message?.content || '';
 }
 
+/** Nodus inference — OpenAI-compatible, hosted on Nodus compute */
+function nodusComplete(args) {
+  return openAiCompatibleComplete({
+    ...args,
+    label: 'Nodus',
+    url: `${config.llm.nodusBaseUrl}/chat/completions`,
+    apiKey: config.llm.nodusApiKey,
+    keyEnv: 'NODUS_API_KEY',
+  });
+}
+
+/** Groq — OpenAI-compatible chat completions */
+function groqComplete(args) {
+  return openAiCompatibleComplete({
+    ...args,
+    label: 'Groq',
+    url: 'https://api.groq.com/openai/v1/chat/completions',
+    apiKey: config.llm.groqApiKey,
+    keyEnv: 'GROQ_API_KEY',
+  });
+}
+
 const PROVIDERS = {
+  nodus: nodusComplete,
   groq: groqComplete,
 };
 
@@ -119,7 +142,8 @@ const PROVIDERS = {
 
 /**
  * Run a chat completion with caching.
- * Throws on provider failure or timeout; callers handle fallback.
+ * Throws when the provider (and the fallback provider, if any) fails or times out; callers
+ * handle fallback.
  * @param {object} args
  * @param {string} [args.system] - System prompt
  * @param {string} args.prompt - User prompt
@@ -146,7 +170,17 @@ export async function complete({ system = '', prompt, json = false, maxTokens = 
     }
   }
 
-  const responseText = await provider({ system, prompt, json, maxTokens, model });
+  let responseText;
+  try {
+    responseText = await provider({ system, prompt, json, maxTokens, model });
+  } catch (err) {
+    const fallbackName = config.llm.fallbackProvider;
+    if (!fallbackName || fallbackName === providerName || !PROVIDERS[fallbackName]) throw err;
+    console.warn(`[LLM] ${providerName} failed, falling back to ${fallbackName}:`, err.message);
+    responseText = await PROVIDERS[fallbackName]({
+      system, prompt, json, maxTokens, model: config.llm.fallbackModel,
+    });
+  }
 
   if (cacheKey && responseText) {
     await cachePut(cacheKey, responseText, cacheTtlSeconds);

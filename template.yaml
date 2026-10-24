@@ -68,10 +68,22 @@ Parameters:
     NoEcho: true
     Description: Groq API key for the LLM provider
 
+  NodusApiKey:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Nodus Compute API key (scope inference:invoke) for LLM and speech-to-text
+
+  LlmProvider:
+    Type: String
+    Default: 'nodus'
+    AllowedValues: ['nodus', 'groq']
+    Description: Primary LLM provider; Groq is the fallback when Nodus is primary
+
   LlmModel:
     Type: String
-    Default: 'openai/gpt-oss-120b'
-    Description: Model name passed to the LLM provider
+    Default: 'nodus/gpt-oss-120b'
+    Description: Model name passed to the primary LLM provider
 
   JwtSecret:
     Type: String
@@ -134,9 +146,10 @@ Globals:
         AUDIT_TABLE: !Ref AuditLogTable
         REKOGNITION_COLLECTION_ID: nirman-mitra-workers
         BEDROCK_CACHE_TABLE: !Ref BedrockCacheTable
-        LLM_PROVIDER: groq
+        LLM_PROVIDER: !Ref LlmProvider
         LLM_MODEL: !Ref LlmModel
         GROQ_API_KEY: !Ref GroqApiKey
+        NODUS_API_KEY: !Ref NodusApiKey
         LEX_BOT_ID: ''
         LEX_BOT_ALIAS_ID: ''
         LEX_LOCALE_ID: 'en_US'
