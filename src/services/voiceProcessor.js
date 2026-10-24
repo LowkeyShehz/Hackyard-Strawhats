@@ -1,6 +1,7 @@
 /**
  * Nirman Mitra — Voice Processor Service
- * Voice pipeline: STT provider chain → language detection → ElevenLabs TTS (Polly fallback).
+ * Voice pipeline: STT provider chain → language detection → ElevenLabs TTS (optional Polly
+ * fallback for Hindi and English, off when TTS_FALLBACK=none).
  * Voice-first, zero literacy required.
  */
 
@@ -14,7 +15,9 @@ import { transcribe } from '../providers/stt.js';
 import { hasElevenLabsVoice, elevenLabsSpeak, ttsCacheKey } from '../providers/tts.js';
 import { KN } from '../utils/i18n.js';
 
-const pollyClient = new PollyClient({ region: config.aws.region });
+// Created on first use, so deployments without the Polly fallback never need AWS credentials
+let pollyClient = null;
+const polly = () => (pollyClient ??= new PollyClient({ region: config.aws.region }));
 
 // ─────────────────────────────────────────────────────────
 // Language Detection
@@ -150,11 +153,11 @@ export async function generateVoiceResponse(text, languageCode = 'hi') {
   const voiceConfig = config.pollyVoices[languageCode];
   // No Polly voice for this language: speaking it with another language's voice would be
   // unintelligible, so the reply goes out as text only
-  if (!voiceConfig) return Buffer.alloc(0);
+  if (!hasPollyVoice(languageCode)) return Buffer.alloc(0);
 
   try {
     const result = await withRetry(
-      () => pollyClient.send(
+      () => polly().send(
         new SynthesizeSpeechCommand({
           Text: text,
           OutputFormat: 'mp3',
@@ -179,9 +182,9 @@ export async function generateVoiceResponse(text, languageCode = 'hi') {
   }
 }
 
-/** Whether Amazon Polly has a voice for this language (see config.pollyVoices) */
+/** Whether the Polly fallback is on and has a voice for this language (see config.pollyVoices) */
 export function hasPollyVoice(languageCode) {
-  return Boolean(config.pollyVoices[languageCode]);
+  return config.ttsFallback === 'polly' && Boolean(config.pollyVoices[languageCode]);
 }
 
 /** Whether a reply in this language can be spoken (ElevenLabs voice or Polly voice) */
@@ -196,7 +199,7 @@ export function hasVoice(languageCode) {
 async function elevenLabsVoiceUrl(text, languageCode) {
   const bucket = config.buckets.mediaProcessed;
   const key = ttsCacheKey(text, languageCode);
-  // The local mock S3 answers every GET with a placeholder, so the cache is only read on AWS
+  // The local mock store answers every GET with a placeholder, so the cache is only read when hosted
   if (!isDemoMode()) {
     const cached = await downloadFromS3(bucket, key).catch(() => null);
     if (cached?.length) return generatePresignedUrl(bucket, key, 3600);
@@ -214,8 +217,8 @@ async function elevenLabsVoiceUrl(text, languageCode) {
 
 /**
  * Generate voice response, upload to S3, and return a pre-signed URL.
- * ElevenLabs speaks every language it has a voice for (including Kannada); Polly is the fallback
- * for Hindi and English.
+ * ElevenLabs speaks every language it has a voice for; Polly is the optional fallback for Hindi
+ * and English (TTS_FALLBACK=polly). Anything else gets a text-only reply.
  * @param {string} workerId
  * @param {string} text - Text to speak
  * @param {string} languageCode

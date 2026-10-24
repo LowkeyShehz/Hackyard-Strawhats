@@ -26,11 +26,29 @@ function parseVoiceIds(raw) {
 
 /** Deployed runtime: Lambda, or src/server.js on Render (Render sets RENDER=true on every service) */
 const HOSTED = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.RENDER);
+const DEMO = !HOSTED && (process.env.ENVIRONMENT || 'dev') === 'dev';
 
 const config = Object.freeze({
   // Environment
   environment: process.env.ENVIRONMENT || 'dev',
   certificateThreshold: parseCertificateThreshold(process.env.CERTIFICATE_THRESHOLD),
+
+  // Where data and files live. 'memory' is the local demo store; DB_BACKEND / STORAGE_BACKEND
+  // override the default (render.yaml sets postgres + disk; the Lambda stack uses dynamodb + s3).
+  dbBackend: process.env.DB_BACKEND || (DEMO ? 'memory' : 'dynamodb'),
+  databaseUrl: process.env.DATABASE_URL || '',
+  storageBackend: process.env.STORAGE_BACKEND || (DEMO ? 'memory' : 's3'),
+  storage: {
+    // Root folder of the disk backend: one sub-folder per bucket name below
+    dir: process.env.STORAGE_DIR || './data/files',
+    // Public base URL of the API that serves /files/... links (Render sets RENDER_EXTERNAL_URL)
+    publicBaseUrl: (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3001').replace(/\/+$/, ''),
+    // Signs the expiring /files/... links that stand in for S3 pre-signed URLs
+    urlSecret: process.env.FILE_URL_SECRET || (HOSTED ? '' : 'dev-file-url-secret'),
+  },
+
+  // Document OCR at onboarding: 'tesseract' (in-process) or 'textract' (AWS)
+  ocrProvider: process.env.OCR_PROVIDER || 'textract',
 
   // Process webhook messages in a separate async invocation (set in template.yaml; only on Lambda)
   asyncWebhook: process.env.ASYNC_WEBHOOK === 'true' && Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME),
@@ -167,12 +185,16 @@ const config = Object.freeze({
   },
 
   // ElevenLabs (speech-to-text fallback and text-to-speech). voiceIds maps a language code (or
-  // "default") to a voice ID; languages without a voice fall back to Polly or text-only replies.
+  // "default") to a voice ID; languages without a voice fall back to Polly (if enabled) or text-only replies.
   elevenLabs: {
     apiKey: process.env.ELEVENLABS_API_KEY || '',
     ttsModel: process.env.ELEVENLABS_TTS_MODEL || 'eleven_v3',
     voiceIds: parseVoiceIds(process.env.ELEVENLABS_VOICE_IDS),
   },
+
+  // Spoken-reply fallback when ElevenLabs has no voice for a language or fails: 'polly' (AWS,
+  // Hindi and English only) or 'none' (text-only reply; render.yaml sets this)
+  ttsFallback: process.env.TTS_FALLBACK || 'polly',
 
   // Polly language → voice mapping. Polly's only Indian voices are hi-IN and en-IN (Kajal,
   // Aditi, Raveena); there is no Kannada, Tamil, Telugu, Malayalam, Bengali, Marathi or Gujarati
@@ -186,7 +208,7 @@ const config = Object.freeze({
 
 /** Check if running in demo/dev mode (only true when running locally, not on Lambda or Render) */
 export function isDemoMode() {
-  return !HOSTED && config.environment === 'dev';
+  return DEMO;
 }
 
 /**
