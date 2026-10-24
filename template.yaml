@@ -85,6 +85,23 @@ Parameters:
     Default: ''
     Description: 'JSON map of language code to ElevenLabs voice ID, e.g. {"kn":"...","hi":"...","default":"..."}'
 
+  FraudServiceUrl:
+    Type: String
+    Default: ''
+    Description: Base URL of the Nodus fraud bridge (nodus/bridge.py); empty disables selfie fraud checks
+
+  FraudServiceToken:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Bearer token shared with the Nodus fraud bridge
+
+  GpsHashKey:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Key for hashing exact GPS fixes (falls back to JwtSecret)
+
   LlmProvider:
     Type: String
     Default: 'nodus'
@@ -165,6 +182,9 @@ Globals:
         STT_PROVIDERS: 'nodus,elevenlabs,groq'
         ELEVENLABS_VOICE_IDS: !Ref ElevenLabsVoiceIds
         ELEVENLABS_TTS_MODEL: eleven_v3
+        FRAUD_SERVICE_URL: !Ref FraudServiceUrl
+        FRAUD_SERVICE_TOKEN: !Ref FraudServiceToken
+        GPS_HASH_KEY: !Ref GpsHashKey
         LEX_BOT_ID: ''
         LEX_BOT_ALIAS_ID: ''
         LEX_LOCALE_ID: 'en_US'

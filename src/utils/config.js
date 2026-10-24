@@ -132,6 +132,15 @@ const config = Object.freeze({
     nodusBaseUrl: (process.env.NODUS_BASE_URL || 'https://inference.nodus-compute.ai/v1').replace(/\/+$/, ''),
   },
 
+  // Nodus fraud service (nodus/bridge.py). gpsHashKey keys the hash of each exact GPS fix so the
+  // nightly sweep can spot identical fixes without the coordinates being stored.
+  fraud: {
+    serviceUrl: (process.env.FRAUD_SERVICE_URL || '').replace(/\/+$/, ''),
+    serviceToken: process.env.FRAUD_SERVICE_TOKEN || '',
+    timeoutMs: parseInt(process.env.FRAUD_SERVICE_TIMEOUT_MS || '6000', 10),
+    gpsHashKey: process.env.GPS_HASH_KEY || process.env.JWT_SECRET || '',
+  },
+
   // Speech-to-text chain (see src/providers/stt.js), tried in order; providers without a key are
   // skipped
   stt: {

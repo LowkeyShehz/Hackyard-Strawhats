@@ -62,6 +62,8 @@ export const nodus = { calls: [], requests: [], fail: false };
 export const transcribe = { text: 'aaj maine teesri manzil pe plaster kiya', fail: false, jobs: [] };
 // Nodus and ElevenLabs speech-to-text: each call is recorded; failProviders makes one return 500
 export const stt = { calls: [], failProviders: new Set() };
+// Nodus fraud service (nodus/bridge.py): respond() builds the analyze_selfie result
+export const fraud = { calls: [], fail: false, respond: () => ({ phash: 'ab12', embedding: 'AAA=', face_embedding: 'BBB=', recapture_score: 0.1, near_duplicate: null, flags: [] }) };
 // ElevenLabs text-to-speech: each call is recorded as { voiceId, body }
 export const elevenTts = { calls: [], fail: false };
 const realFetch = globalThis.fetch;
@@ -78,6 +80,12 @@ globalThis.fetch = async (url, opts) => {
   }
   const sttProvider = url.includes('inference.nodus-compute.ai/v1/audio/transcriptions') ? 'nodus'
     : url.includes('api.elevenlabs.io/v1/speech-to-text') ? 'elevenlabs' : null;
+  if (url.startsWith('https://fraud.test/analyze-selfie')) {
+    const body = JSON.parse(opts.body);
+    fraud.calls.push({ body, headers: opts.headers });
+    if (fraud.fail) return new Response('down', { status: 502 });
+    return new Response(JSON.stringify(fraud.respond(body)), { status: 200 });
+  }
   const ttsMatch = url.match(/api\.elevenlabs\.io\/v1\/text-to-speech\/([^?]+)/);
   if (ttsMatch) {
     elevenTts.calls.push({ voiceId: decodeURIComponent(ttsMatch[1]), body: JSON.parse(opts.body), headers: opts.headers });

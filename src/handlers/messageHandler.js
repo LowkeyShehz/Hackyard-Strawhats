@@ -1497,11 +1497,12 @@ async function processFullAttendance(workerId, worker, language, state, voiceTra
       preferred_language: language,
     });
 
-    // Run Triple Verification — all three in parallel
-    const [faceResult, geoResult, voiceResult] = await Promise.all([
+    // Run Triple Verification — all three in parallel, alongside the Nodus fraud check
+    const [faceResult, geoResult, voiceResult, fraudResult] = await Promise.all([
       attendanceHandler({ task: 'face_verify', workerId, selfieKey, bucket: config.buckets.mediaRaw }),
       attendanceHandler({ task: 'geo_verify', workerId, latitude, longitude }),
       attendanceHandler({ task: 'voice_verify', workerId, voiceTranscription: voice, language, passcode: state.passcode || null }),
+      attendanceHandler({ task: 'fraud_check', workerId, selfieKey, bucket: config.buckets.mediaRaw }),
     ]);
 
     const decision = await attendanceHandler({
@@ -1510,6 +1511,9 @@ async function processFullAttendance(workerId, worker, language, state, voiceTra
       faceResult,
       geoResult,
       voiceResult,
+      fraudResult,
+      latitude,
+      longitude,
       imageHash: state.pending_selfie_hash || null,
       voiceSource: voiceTranscription ? voiceSource : 'none',
       language,

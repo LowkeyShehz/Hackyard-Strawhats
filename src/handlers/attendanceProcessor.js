@@ -7,6 +7,7 @@
  *   - face_verify: Rekognition CompareFaces against enrolled face
  *   - geo_verify: GPS extraction from EXIF + geo-fence check against Sites table
  *   - voice_verify: LLM extracts work details from voice transcription
+ *   - fraud_check: Nodus Compute selfie analysis (near-duplicate, screen recapture)
  *   - merge_decision: Combine all results + confidence routing + DynamoDB write
  */
 
@@ -26,6 +27,7 @@ import { putItemIfAbsent } from '../services/conditionalWrite.js';
 import { complete } from '../providers/llm.js';
 import { withRetry } from '../utils/retryHelper.js';
 import { languageName } from '../utils/i18n.js';
+import { analyzeSelfie, fraudServiceEnabled, gpsFingerprint } from '../services/fraudSignals.js';
 
 const rekognitionClient = new RekognitionClient({ region: config.aws.region });
 
@@ -45,6 +47,8 @@ export const handler = async (event) => {
         return await processGeoVerification(event);
       case 'voice_verify':
         return await processVoiceVerification(event);
+      case 'fraud_check':
+        return await processFraudCheck(event);
       case 'merge_decision':
         return await processMergeDecision(event);
       default:
@@ -338,6 +342,22 @@ Respond in EXACTLY this JSON format (no markdown, no code blocks):
 }
 
 // ---------------------------------------------------------
+// Task: Fraud Check (Nodus Compute selfie analysis)
+// ---------------------------------------------------------
+
+async function processFraudCheck(event) {
+  const { workerId, selfieKey, bucket } = event;
+  if (!fraudServiceEnabled() || !selfieKey || isDemoMode()) return { analyzed: false, flags: [] };
+  try {
+    const selfieBuffer = await downloadFromS3(bucket || config.buckets.mediaRaw, selfieKey);
+    return await analyzeSelfie(workerId, selfieBuffer);
+  } catch (err) {
+    console.warn('[AttendanceProcessor] Fraud check skipped:', err.message);
+    return { analyzed: false, flags: [] };
+  }
+}
+
+// ---------------------------------------------------------
 // Task: Merge + Decision (Confidence Routing)
 // Confidence Routing Rules
 // ---------------------------------------------------------
@@ -442,6 +462,13 @@ async function processMergeDecision(event) {
     && voiceResult?.workDetails?.is_work_related === true
     && !voiceResult?.workDetails?.passcode_mismatch;
 
+  // Nodus fraud signals: a re-sent selfie or a photo of a screen can never auto-approve
+  const fraudResult = event.fraudResult || { analyzed: false, flags: [] };
+  for (const flag of fraudResult.flags || []) {
+    flaggedReasons.push(`Nodus: ${flag}`);
+  }
+  const fraudBlocksAutoApprove = (fraudResult.flags || []).length > 0;
+
   // Off-hours check
   const isOffHours = currentHour < 6 || currentHour >= 20;
   if (isOffHours) {
@@ -454,7 +481,7 @@ async function processMergeDecision(event) {
 
   if (hasHardFail) {
     verificationStatus = 'rejected';
-  } else if (faceConfidence >= 60 && geoConfidence >= 60 && voiceVerified && !flaggedReasons.some(r => r.includes('spoof'))) {
+  } else if (faceConfidence >= 60 && geoConfidence >= 60 && voiceVerified && !fraudBlocksAutoApprove && !flaggedReasons.some(r => r.includes('spoof'))) {
     verificationStatus = 'auto_approved';
   } else {
     verificationStatus = 'pending_review';
@@ -479,6 +506,14 @@ async function processMergeDecision(event) {
     flagged_reason: flaggedReasons.join(' | ') || null,
     is_off_hours: isOffHours,
     image_hash: event.imageHash || null,
+    fraud_signals: fraudResult.analyzed
+      ? {
+        source: 'nodus',
+        near_duplicate_of: fraudResult.nearDuplicateOf || null,
+        recapture_score: fraudResult.recaptureScore ?? null,
+      }
+      : null,
+    ...gpsFingerprint(event.latitude, event.longitude),
     created_at: timestamp,
   };
 
