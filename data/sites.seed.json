@@ -2,8 +2,8 @@
   "_comment": "DEMO sites only. Coordinates are placeholders for demos, not real project sites. Load with scripts/seed-sites.mjs.",
   "sites": [
     {
-      "site_id": "DEMO-NITK-SURATHKAL",
-      "name": "[DEMO] NITK Surathkal campus",
+      "site_id": "DEMO-SURATHKAL",
+      "name": "[DEMO] Surathkal site",
       "latitude": 13.0108,
       "longitude": 74.7943,
       "radius_meters": 500,

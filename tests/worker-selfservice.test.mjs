@@ -46,10 +46,10 @@ test('tapping "today" with no check-in says none yet', async () => {
 test('"aaj" after a verified check-in reports it verified with the site', async () => {
   await putItem(config.tables.attendance, {
     worker_id: 'w-ss-1', log_date: istDate(), verification_status: 'auto_approved',
-    site_id: 'S1', site_name: 'NITK Site', timestamp: new Date().toISOString(),
+    site_id: 'S1', site_name: 'Metro Site', timestamp: new Date().toISOString(),
   });
   const { replies } = await send('918200000001', M.text('aaj'));
-  assert.match(replies[0], /verified ✅ \(NITK Site\)/);
+  assert.match(replies[0], /verified ✅ \(Metro Site\)/);
 });
 
 test('a work description containing "aaj" is not a today-status query', async () => {
@@ -61,7 +61,7 @@ test('"mere din" lists recent days, newest first, with a verified count', async 
   const yesterday = istDate(Date.now() - 86400000);
   await putItem(config.tables.attendance, {
     worker_id: 'w-ss-1', log_date: yesterday, verification_status: 'pending_review',
-    site_id: 'S1', site_name: 'NITK Site', timestamp: new Date().toISOString(),
+    site_id: 'S1', site_name: 'Metro Site', timestamp: new Date().toISOString(),
   });
   const { replies } = await send('918200000001', M.text('mere din'));
   const [header, first, second] = replies[0].split('\n');

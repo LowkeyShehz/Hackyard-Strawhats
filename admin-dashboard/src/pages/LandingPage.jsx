@@ -1011,7 +1011,7 @@ export default function LandingPage() {
                                 <h4>Resources</h4>
                                 <ul>
                                     <li><a href="#about">About the Mission</a></li>
-                                    <li><a href="https://github.com/ABUBAK3R-K/NITK-Build-for-Billions" target="_blank" rel="noopener noreferrer">GitHub Repo</a></li>
+                                    <li><a href="https://github.com/LowkeyShehz/Hackyard-Strawhats" target="_blank" rel="noopener noreferrer">GitHub Repo</a></li>
                                 </ul>
                             </div>
 
@@ -1026,7 +1026,7 @@ export default function LandingPage() {
                                         </a>
                                     </li>
                                     <li>
-                                        <a href="https://github.com/ABUBAK3R-K/NITK-Build-for-Billions" target="_blank" rel="noopener noreferrer" className="footer-link-icon">
+                                        <a href="https://github.com/LowkeyShehz/Hackyard-Strawhats" target="_blank" rel="noopener noreferrer" className="footer-link-icon">
                                             <GithubIcon />
                                             GitHub
                                         </a>
@@ -1043,7 +1043,7 @@ export default function LandingPage() {
                                 <span className="footer-dot"></span>
                                 <a href="#about">About</a>
                                 <span className="footer-dot"></span>
-                                <a href="https://github.com/ABUBAK3R-K/NITK-Build-for-Billions" target="_blank" rel="noopener noreferrer">Source</a>
+                                <a href="https://github.com/LowkeyShehz/Hackyard-Strawhats" target="_blank" rel="noopener noreferrer">Source</a>
                             </div>
                         </div>
                     </div>

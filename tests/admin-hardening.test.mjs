@@ -195,21 +195,21 @@ test('sites: validated create/update in the shape the geo check reads, and list'
   const viewer = jwt.sign({ admin_id: 'v', role: 'viewer' }, config.jwt.secret);
   assert.equal((await post(base, viewer)).status, 403);
 
-  const created = await post({ ...base, site_id: 'DEMO-NITK' });
+  const created = await post({ ...base, site_id: 'DEMO-SITE' });
   assert.equal(created.status, 201, JSON.stringify(created.body));
-  const stored = H.table('Sites').get(JSON.stringify(['DEMO-NITK', null]));
+  const stored = H.table('Sites').get(JSON.stringify(['DEMO-SITE', null]));
   assert.deepEqual(
     { site_name: stored.site_name, geo_location: stored.geo_location, radius_meters: stored.radius_meters, is_active: stored.is_active },
     { site_name: 'Demo Site', geo_location: { latitude: 13.0108, longitude: 74.7943 }, radius_meters: 500, is_active: 'true' },
   );
   const active = await db.queryItems(config.tables.sites, 'is_active = :active', { ':active': 'true' }, 'ActiveSitesIndex');
-  assert.ok(active.some((s) => s.site_id === 'DEMO-NITK'));
+  assert.ok(active.some((s) => s.site_id === 'DEMO-SITE'));
 
-  const updated = await post({ ...base, site_id: 'DEMO-NITK', radius_meters: 800, is_active: false });
+  const updated = await post({ ...base, site_id: 'DEMO-SITE', radius_meters: 800, is_active: false });
   assert.equal(updated.status, 200);
   assert.equal(updated.body.site.is_active, false);
-  assert.equal(H.table('Sites').get(JSON.stringify(['DEMO-NITK', null])).created_at, stored.created_at);
-  assert.equal(H.table('Sites').get(JSON.stringify(['DEMO-NITK', null])).is_active, 'false');
+  assert.equal(H.table('Sites').get(JSON.stringify(['DEMO-SITE', null])).created_at, stored.created_at);
+  assert.equal(H.table('Sites').get(JSON.stringify(['DEMO-SITE', null])).is_active, 'false');
 
   const auto = await post({ ...base, name: 'Second' });
   assert.equal(auto.status, 201);
@@ -217,9 +217,9 @@ test('sites: validated create/update in the shape the geo check reads, and list'
 
   const list = await callApi('GET', '/api/admin/sites', { token });
   assert.equal(list.status, 200);
-  const nitk = list.body.sites.find((s) => s.site_id === 'DEMO-NITK');
-  assert.deepEqual({ ...nitk, created_at: undefined, updated_at: undefined },
-    { site_id: 'DEMO-NITK', name: 'Demo Site', latitude: 13.0108, longitude: 74.7943, radius_meters: 800, is_active: false, created_at: undefined, updated_at: undefined });
+  const site = list.body.sites.find((s) => s.site_id === 'DEMO-SITE');
+  assert.deepEqual({ ...site, created_at: undefined, updated_at: undefined },
+    { site_id: 'DEMO-SITE', name: 'Demo Site', latitude: 13.0108, longitude: 74.7943, radius_meters: 800, is_active: false, created_at: undefined, updated_at: undefined });
 });
 
 test('certificate verify: HTTP API v2 events, trailing slash, name and Aadhaar last 4 from the certificate, no phone', async () => {

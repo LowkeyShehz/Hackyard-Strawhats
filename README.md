@@ -176,4 +176,4 @@ nirman-mitra/
 
 ## Team
 
-**StrawHats** | NITK Build for Billions Hackathon
+**StrawHats** | Hackyard Build 2026
