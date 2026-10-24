@@ -1,6 +1,7 @@
 name: CI
 
-# Tests (Node and Python), lint and the dashboard build on every push and pull request. Deployment stays manual.
+# Tests (Node and Python), lint and the dashboard build on every push and pull request.
+# Render (render.yaml) deploys main only after these checks pass.
 on:
   push:
   pull_request:

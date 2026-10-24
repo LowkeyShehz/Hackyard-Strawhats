@@ -74,6 +74,14 @@ const LEX_LOCALE = process.env.LEX_LOCALE_ID || 'en_US';
 
 const ASYNC_EVENT_SOURCE = 'nirman-mitra.webhook';
 
+// Webhook payloads still being processed in the background (src/server.js only)
+const backgroundWork = new Set();
+
+/** Resolves once every background webhook payload has finished; the server awaits it on shutdown */
+export function drainBackgroundWork() {
+  return Promise.allSettled([...backgroundWork]);
+}
+
 export const handler = async (event) => {
   // Second half of an async webhook: the verified payload, re-invoked by the first half below
   if (event?.source === ASYNC_EVENT_SOURCE) {
@@ -110,6 +118,16 @@ export const handler = async (event) => {
           InvocationType: 'Event',
           Payload: Buffer.from(JSON.stringify({ source: ASYNC_EVENT_SOURCE, payload })),
         }));
+        return apiResponse(200, { status: 'received' });
+      }
+
+      // Same idea on the long-running server: acknowledge, then keep working in this process
+      if (config.backgroundWebhook) {
+        const work = handleIncomingMessages(payload)
+          .then((results) => console.log('Webhook results (background):', results.map((r) => r.body).join(' ')))
+          .catch((err) => console.error('MessageHandler background error:', err))
+          .finally(() => backgroundWork.delete(work));
+        backgroundWork.add(work);
         return apiResponse(200, { status: 'received' });
       }
 

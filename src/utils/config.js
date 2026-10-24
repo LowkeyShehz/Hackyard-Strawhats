@@ -24,6 +24,9 @@ function parseVoiceIds(raw) {
   }
 }
 
+/** Deployed runtime: Lambda, or src/server.js on Render (Render sets RENDER=true on every service) */
+const HOSTED = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.RENDER);
+
 const config = Object.freeze({
   // Environment
   environment: process.env.ENVIRONMENT || 'dev',
@@ -31,6 +34,10 @@ const config = Object.freeze({
 
   // Process webhook messages in a separate async invocation (set in template.yaml; only on Lambda)
   asyncWebhook: process.env.ASYNC_WEBHOOK === 'true' && Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME),
+
+  // Process webhook messages in the background of the same process after acknowledging
+  // (set in render.yaml; only for the long-running server in src/server.js)
+  backgroundWebhook: process.env.BACKGROUND_WEBHOOK === 'true',
 
   // Public URL of the dashboard / officer portal (no trailing slash); certificate QR codes link here
   portalUrl: (process.env.PORTAL_URL || '').replace(/\/+$/, ''),
@@ -49,11 +56,10 @@ const config = Object.freeze({
 
   // JWT Auth
   jwt: {
-    // The dev fallbacks apply only to local runs. On Lambda a missing secret stays empty, so
+    // The dev fallbacks apply only to local runs. When hosted a missing secret stays empty, so
     // signing fails and every token is rejected instead of trusting a publicly known key.
-    secret: process.env.JWT_SECRET || (process.env.AWS_LAMBDA_FUNCTION_NAME ? '' : 'dev-jwt-secret-change-me'),
-    refreshSecret: process.env.JWT_REFRESH_SECRET
-      || (process.env.AWS_LAMBDA_FUNCTION_NAME ? '' : 'dev-refresh-secret-change-me'),
+    secret: process.env.JWT_SECRET || (HOSTED ? '' : 'dev-jwt-secret-change-me'),
+    refreshSecret: process.env.JWT_REFRESH_SECRET || (HOSTED ? '' : 'dev-refresh-secret-change-me'),
     accessTokenExpiry: '15m',
     refreshTokenExpiry: '7d',
   },
@@ -178,9 +184,9 @@ const config = Object.freeze({
   },
 });
 
-/** Check if running in demo/dev mode (only true when running locally, not on Lambda) */
+/** Check if running in demo/dev mode (only true when running locally, not on Lambda or Render) */
 export function isDemoMode() {
-  return !process.env.AWS_LAMBDA_FUNCTION_NAME && config.environment === 'dev';
+  return !HOSTED && config.environment === 'dev';
 }
 
 /**
