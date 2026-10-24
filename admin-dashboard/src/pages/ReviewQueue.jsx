@@ -34,7 +34,9 @@ function SignalConfidence({ label, value }) {
 
 function ReasonBadge({ reason }) {
     let type = 'default';
-    if (reason.toLowerCase().includes('face')) type = 'danger';
+    // Nodus Compute fraud signals (near-duplicate selfie, phone farm, mock GPS, shared face)
+    if (reason.startsWith('Nodus')) type = 'danger';
+    else if (reason.toLowerCase().includes('face')) type = 'danger';
     else if (reason.toLowerCase().includes('geo') || reason.toLowerCase().includes('location') || reason.toLowerCase().includes('site')) type = 'warning';
     else if (reason.toLowerCase().includes('voice') || reason.toLowerCase().includes('audio')) type = 'warning';
 
@@ -48,6 +50,26 @@ function ReasonBadge({ reason }) {
         }} title={reason}>
             {reason}
         </span>
+    );
+}
+
+const TRIAGE_STYLES = {
+    approve: { label: 'Suggests approve', color: 'var(--success)', bg: 'rgba(40, 167, 69, 0.08)' },
+    reject: { label: 'Suggests reject', color: 'var(--danger)', bg: 'rgba(220, 53, 69, 0.08)' },
+    needs_human: { label: 'Needs your judgement', color: '#b8860b', bg: 'rgba(255, 193, 7, 0.1)' },
+};
+
+/** Recommendation written by the Agent37 ops agent; the officer still decides */
+function AiTriage({ triage }) {
+    const style = TRIAGE_STYLES[triage.recommendation] || TRIAGE_STYLES.needs_human;
+    return (
+        <div style={{ marginTop: '6px', padding: '6px 8px', borderRadius: '6px', fontSize: '12px', background: style.bg, borderLeft: `3px solid ${style.color}` }}
+            title={`Agent37 triage at ${triage.at || ''}`}>
+            <div style={{ fontWeight: 'bold', color: style.color }}>
+                AI triage: {style.label}{typeof triage.confidence === 'number' ? ` (${Math.round(triage.confidence)}%)` : ''}
+            </div>
+            <div style={{ color: 'var(--text-secondary)', marginTop: '2px' }}>{triage.note}</div>
+        </div>
     );
 }
 
@@ -233,6 +255,7 @@ export default function ReviewQueue() {
                             {reviews.map(log => {
                                 const key = logIdOf(log);
                                 const reason = log.flagged_reason || log.review_reason;
+                                const sweepFlags = (log.fraud_flags || []).map(f => `Nodus sweep: ${f}`);
                                 const isSelected = selectedIds.has(key);
                                 return (
                                     <tr key={key} style={{ backgroundColor: isSelected ? 'rgba(var(--primary-rgb), 0.05)' : 'transparent' }}>
@@ -255,10 +278,11 @@ export default function ReviewQueue() {
                                         </td>
                                         <td style={{ maxWidth: '280px' }}>
                                             <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap' }}>
-                                            {reason
-                                                ? reason.split(' | ').map((r, i) => <ReasonBadge key={i} reason={r} />)
+                                            {reason || sweepFlags.length
+                                                ? [...(reason ? reason.split(' | ') : []), ...sweepFlags].map((r, i) => <ReasonBadge key={i} reason={r} />)
                                                 : <span style={{ color: 'var(--text-muted)' }}>-</span>}
                                             </div>
+                                            {log.ai_triage && <AiTriage triage={log.ai_triage} />}
                                             {(log.enrolled_image_url || log.checkin_image_url) && (
                                                 <button className="btn btn-outline btn-sm" style={{ marginTop: '8px', fontSize: '11px', padding: '4px 8px' }} onClick={() => setViewingImages(log)}>
                                                     🖼️ View Selfies
