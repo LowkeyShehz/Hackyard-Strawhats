@@ -47,7 +47,7 @@ test('a clean Nodus analysis auto-approves and stores the selfie fingerprint', a
   const call = H.fraud.calls.at(-1);
   assert.equal(call.headers.Authorization, 'Bearer fraud-token');
   assert.ok(call.body.image_b64.length > 0);
-  assert.deepEqual(log.fraud_signals, { source: 'nodus', near_duplicate_of: null, recapture_score: 0.1 });
+  assert.deepEqual(log.fraud_signals, { source: 'local', near_duplicate_of: null, recapture_score: 0.1 });
   const worker = H.worker('919300000001');
   assert.equal(worker.selfie_history.length, 1);
   assert.equal(worker.selfie_history[0].phash, 'ab12');

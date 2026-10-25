@@ -61,6 +61,17 @@ test('enrolment stores the SFace embedding, and a matching check-in auto-approve
   assert.equal(H.rek.compareSources.length, rekCallsBefore, 'Rekognition not called');
 });
 
+test('the check-in selfie is linked on the log, so the review queue can show it', async () => {
+  await onboard('919400000006');
+  H.fraud.face.similarity = 50;
+  const log = await checkIn('919400000006');
+  assert.match(log.s3_media_keys.selfie, /checkin-selfie/);
+  const token = (await H.callApi('POST', '/api/auth/seed', { body: { email: 'q@x.test', password: 'Pass-word-123', name: 'Q', seedSecret: 'test-seed-secret' } }), (await H.callApi('POST', '/api/auth/login', { body: { email: 'q@x.test', password: 'Pass-word-123' } })).body.accessToken);
+  const queue = await H.callApi('GET', '/api/admin/review-queue', { token });
+  const item = queue.body.items.find((i) => i.worker_id === log.worker_id);
+  assert.ok(item.checkin_image_url, 'check-in selfie URL present');
+});
+
 test('a selfie with no face or two faces is refused at enrolment', async () => {
   H.fraud.face.problem = 'multiple_faces';
   const reply = await onboard('919400000002');

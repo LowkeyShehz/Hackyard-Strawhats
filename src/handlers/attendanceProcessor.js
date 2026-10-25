@@ -551,9 +551,12 @@ async function processMergeDecision(event) {
     flagged_reason: flaggedReasons.join(' | ') || null,
     is_off_hours: isOffHours,
     image_hash: event.imageHash || null,
+    // The officer's side-by-side view presigns this next to the enrolled selfie
+    s3_media_keys: event.selfieKey ? { selfie: event.selfieKey } : null,
     fraud_signals: fraudResult.analyzed
       ? {
-        source: 'nodus',
+        // 'nodus' once the bridge runs on Nodus Compute, 'local' while it runs on its own CPU
+        source: fraudResult.backend || 'local',
         near_duplicate_of: fraudResult.nearDuplicateOf || null,
         recapture_score: fraudResult.recaptureScore ?? null,
       }

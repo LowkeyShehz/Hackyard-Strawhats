@@ -52,6 +52,7 @@ export async function analyzeSelfie(workerId, selfieBuffer) {
       flags: Array.isArray(result.flags) ? result.flags.map(String) : [],
       recaptureScore: typeof result.recapture_score === 'number' ? result.recapture_score : undefined,
       nearDuplicateOf: result.near_duplicate?.date || null,
+      backend: result.backend === 'nodus' ? 'nodus' : 'local',
     };
   } catch (err) {
     console.warn('[Fraud] Selfie analysis skipped:', err.message);

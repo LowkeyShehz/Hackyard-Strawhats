@@ -1532,6 +1532,7 @@ async function processFullAttendance(workerId, worker, language, state, voiceTra
       fraudResult,
       latitude,
       longitude,
+      selfieKey,
       imageHash: state.pending_selfie_hash || null,
       voiceSource: voiceTranscription ? voiceSource : 'none',
       language,

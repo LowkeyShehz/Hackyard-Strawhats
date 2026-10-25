@@ -63,7 +63,7 @@ export const transcribe = { text: 'aaj maine teesri manzil pe plaster kiya', fai
 // Nodus and ElevenLabs speech-to-text: each call is recorded; failProviders makes one return 500
 export const stt = { calls: [], failProviders: new Set() };
 // Nodus fraud service (nodus/bridge.py): respond() builds the analyze_selfie result
-export const fraud = { calls: [], fail: false, faceCalls: [], faceFail: false, face: { problem: null, found: true, similarity: 95 }, respond: () => ({ phash: 'ab12', embedding: 'AAA=', face_embedding: 'BBB=', recapture_score: 0.1, near_duplicate: null, flags: [] }) };
+export const fraud = { calls: [], fail: false, faceCalls: [], faceFail: false, face: { problem: null, found: true, similarity: 95 }, respond: () => ({ phash: 'ab12', embedding: 'AAA=', face_embedding: 'BBB=', recapture_score: 0.1, near_duplicate: null, flags: [], backend: 'local' }) };
 // ElevenLabs text-to-speech: each call is recorded as { voiceId, body }
 export const elevenTts = { calls: [], fail: false };
 const realFetch = globalThis.fetch;
