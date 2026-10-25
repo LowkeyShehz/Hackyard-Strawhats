@@ -10,6 +10,7 @@ Nodus.
 from __future__ import annotations
 
 import os
+import threading
 import urllib.request
 
 import numpy as np
@@ -30,6 +31,8 @@ MIN_BRIGHTNESS, MAX_BRIGHTNESS = 20.0, 90.0
 
 _detector = None
 _recognizer = None
+# OpenCV DNN models are not thread-safe, and the bridge serves requests from a thread pool
+_lock = threading.Lock()
 
 
 def ensure_models() -> None:
@@ -81,21 +84,22 @@ def embed_face(image_bytes: bytes) -> dict:
     returns {"faces": n, "embedding": [128 floats] | None, "quality": {...} | None,
              "problem": None | "no_face" | "multiple_faces" | "low_quality"}
     """
-    detector, recognizer = _models()
     img = _decode(image_bytes)
-    detector.setInputSize((img.shape[1], img.shape[0]))
-    _, faces = detector.detect(img)
-    faces = [] if faces is None else list(faces)
-    if not faces:
-        return {"faces": 0, "embedding": None, "quality": None, "problem": "no_face"}
+    with _lock:
+        detector, recognizer = _models()
+        detector.setInputSize((img.shape[1], img.shape[0]))
+        _, faces = detector.detect(img)
+        faces = [] if faces is None else list(faces)
+        if not faces:
+            return {"faces": 0, "embedding": None, "quality": None, "problem": "no_face"}
+        faces.sort(key=lambda f: f[2] * f[3], reverse=True)
+        largest = faces[0]
+        aligned = recognizer.alignCrop(img, largest)
+        embedding = recognizer.feature(aligned).flatten().astype(np.float32)
 
-    faces.sort(key=lambda f: f[2] * f[3], reverse=True)
-    largest = faces[0]
     # A second face at least half the size of the main one is a real second person
     others = [f for f in faces[1:] if f[2] * f[3] >= 0.5 * largest[2] * largest[3]]
     quality = _quality(img, largest)
-    aligned = recognizer.alignCrop(img, largest)
-    embedding = recognizer.feature(aligned).flatten().astype(np.float32)
     embedding /= np.linalg.norm(embedding) + 1e-9
 
     problem = None
