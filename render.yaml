@@ -62,10 +62,10 @@ services:
     startCommand: node src/server.js
     healthCheckPath: /health
     autoDeployTrigger: checksPass
-    # Webhook messages are processed after the 200; give in-flight ones time to finish on deploy
-    maxShutdownDelaySeconds: 120
     # Worker media, certificates, cached voice replies and the Tesseract language data. A disk
-    # pins the API to one instance, and deploys briefly stop it (no zero-downtime deploys).
+    # pins the API to one instance, and deploys briefly stop it (no zero-downtime deploys). It
+    # also rules out maxShutdownDelaySeconds, so in-flight webhook work gets Render's default
+    # shutdown window after SIGTERM.
     disk:
       name: nirman-files
       mountPath: /var/data
