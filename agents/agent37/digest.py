@@ -55,7 +55,7 @@ def build_digest(date):
     flags = api("GET", "/api/agent/fraud-flags", query={"days": 1})
     try:
         body = llm(SYSTEM, json.dumps({"stats": stats, "fraud_flags": flags["items"][:30]}), max_tokens=1200)
-        return body.strip() + "\n\n_Written by the Agent37 ops agent with Nodus inference._"
+        return body.strip() + "\n\n_Written by the Agent37 ops agent._"
     except Exception as err:  # noqa: BLE001 - fall back to the template
         print(f"LLM unavailable ({err}); using template", file=sys.stderr)
         return template_digest(stats, flags)

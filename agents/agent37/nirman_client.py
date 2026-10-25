@@ -4,8 +4,9 @@ Shared clients for the Agent37 ops agent (standard library only, so it runs in a
 Environment:
   NIRMAN_API_URL   API Gateway base URL, e.g. https://abc.execute-api.ap-south-1.amazonaws.com/prod
   NIRMAN_AGENT_KEY the X-Agent-Key whose SHA-256 is deployed as AgentApiKeyHash
-  NODUS_API_KEY    Nodus inference key (scope inference:invoke)
+  NODUS_API_KEY    Nodus inference key (scope inference:invoke); when unset or failing, Groq is used
   NODUS_MODEL      default nodus/gpt-oss-120b
+  GROQ_API_KEY     fallback LLM (GROQ_MODEL, default openai/gpt-oss-120b)
 """
 
 import json
@@ -18,6 +19,8 @@ AGENT_KEY = os.environ.get("NIRMAN_AGENT_KEY", "")
 NODUS_URL = os.environ.get("NODUS_BASE_URL", "https://inference.nodus-compute.ai/v1").rstrip("/")
 NODUS_KEY = os.environ.get("NODUS_API_KEY", "")
 NODUS_MODEL = os.environ.get("NODUS_MODEL", "nodus/gpt-oss-120b")
+GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
 def _request(method, url, headers, body=None, timeout=30):
@@ -35,17 +38,27 @@ def api(method, path, body=None, query=None):
     return _request(method, url, {"X-Agent-Key": AGENT_KEY}, body)
 
 
-def llm(system, prompt, json_mode=False, max_tokens=800):
-    """One chat completion on Nodus inference (OpenAI-compatible)."""
-    if not NODUS_KEY:
-        raise RuntimeError("NODUS_API_KEY is not set")
+def _chat(url, key, model, system, prompt, json_mode, max_tokens):
     body = {
-        "model": NODUS_MODEL,
+        "model": model,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         "temperature": 0,
         "max_tokens": max_tokens,
     }
     if json_mode:
         body["response_format"] = {"type": "json_object"}
-    data = _request("POST", f"{NODUS_URL}/chat/completions", {"Authorization": f"Bearer {NODUS_KEY}"}, body, timeout=60)
+    data = _request("POST", f"{url}/chat/completions", {"Authorization": f"Bearer {key}"}, body, timeout=60)
     return data["choices"][0]["message"]["content"] or ""
+
+
+def llm(system, prompt, json_mode=False, max_tokens=800):
+    """One chat completion: Nodus inference when NODUS_API_KEY is set, Groq otherwise or on failure."""
+    if NODUS_KEY:
+        try:
+            return _chat(NODUS_URL, NODUS_KEY, NODUS_MODEL, system, prompt, json_mode, max_tokens)
+        except Exception:  # noqa: BLE001 - fall through to Groq
+            if not GROQ_KEY:
+                raise
+    if GROQ_KEY:
+        return _chat("https://api.groq.com/openai/v1", GROQ_KEY, GROQ_MODEL, system, prompt, json_mode, max_tokens)
+    raise RuntimeError("Set NODUS_API_KEY or GROQ_API_KEY")

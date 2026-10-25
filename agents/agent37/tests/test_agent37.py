@@ -51,7 +51,7 @@ def test_triage_posts_llm_notes_and_falls_back_to_rules(monkeypatch):
     monkeypatch.setattr(triage, "llm", fake_llm)
     assert triage.main() == 2, "already-triaged item skipped"
     assert posted[0][0] == "/api/agent/review/W1%232026-10-24/note"
-    assert posted[0][1]["note"].startswith("[Nodus LLM] Four workers")
+    assert posted[0][1]["note"].startswith("[AI] Four workers")
     assert posted[1][1]["recommendation"] == "needs_human"
     assert posted[1][1]["note"].startswith("[rules]")
 

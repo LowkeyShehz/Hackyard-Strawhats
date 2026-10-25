@@ -1,7 +1,7 @@
 """
 Review-queue triage (Agent37 scheduled task, every 30 minutes).
 
-For each pending check-in without a triage note: ask the Nodus LLM for a recommendation, falling
+For each pending check-in without a triage note: ask the LLM (Nodus, or Groq until Nodus access) for a recommendation, falling
 back to rules when the LLM is unavailable, and post it as a note. Notes are recommendations only;
 the officer still approves or rejects in the dashboard.
 
@@ -62,7 +62,7 @@ def triage_item(item):
         "voice_activity", "flagged_reason", "fraud_flags", "fraud_signals", "is_off_hours", "total_days_logged")}
     try:
         result = parse_recommendation(llm(SYSTEM, json.dumps(facts), json_mode=True, max_tokens=900))
-        result["note"] = "[Nodus LLM] " + result["note"]
+        result["note"] = "[AI] " + result["note"]
         return result
     except Exception as err:  # noqa: BLE001 - any LLM failure falls back to rules
         print(f"  LLM unavailable ({err}); using rules", file=sys.stderr)

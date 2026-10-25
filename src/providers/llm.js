@@ -124,6 +124,25 @@ const PROVIDERS = {
   groq: groqComplete,
 };
 
+const KEYS = {
+  nodus: () => config.llm.nodusApiKey,
+  groq: () => config.llm.groqApiKey,
+};
+const configured = (name) => Boolean(KEYS[name]?.());
+
+/**
+ * The provider and model to call: the primary when its key is set; otherwise the fallback, so a
+ * deployment with LLM_PROVIDER=nodus runs on Groq until NODUS_API_KEY is added, then switches.
+ */
+function activeProvider() {
+  const primary = config.llm.provider;
+  const fallback = config.llm.fallbackProvider;
+  if (!configured(primary) && fallback && fallback !== primary && configured(fallback)) {
+    return { name: fallback, model: config.llm.fallbackModel, fallback: null };
+  }
+  return { name: primary, model: config.llm.model, fallback };
+}
+
 // ─────────────────────────────────────────────────────────
 // Public API
 // ─────────────────────────────────────────────────────────
@@ -141,12 +160,11 @@ const PROVIDERS = {
  * @returns {Promise<string>} Response text (JSON string when json=true)
  */
 export async function complete({ system = '', prompt, json = false, maxTokens = 500, cacheTtlSeconds = 0 }) {
-  const providerName = config.llm.provider;
+  const { name: providerName, model, fallback: fallbackName } = activeProvider();
   const provider = PROVIDERS[providerName];
   if (!provider) {
     throw new Error(`Unknown LLM_PROVIDER: ${providerName}`);
   }
-  const model = config.llm.model;
 
   let cacheKey = null;
   if (cacheTtlSeconds > 0) {
@@ -162,7 +180,6 @@ export async function complete({ system = '', prompt, json = false, maxTokens = 
   try {
     responseText = await provider({ system, prompt, json, maxTokens, model });
   } catch (err) {
-    const fallbackName = config.llm.fallbackProvider;
     if (!fallbackName || fallbackName === providerName || !PROVIDERS[fallbackName]) throw err;
     console.warn(`[LLM] ${providerName} failed, falling back to ${fallbackName}:`, err.message);
     responseText = await PROVIDERS[fallbackName]({
