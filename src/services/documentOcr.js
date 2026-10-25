@@ -96,6 +96,8 @@ export async function extractAadhaarFields(imageBuffer) {
   }
 
   const { kvPairs, allText, confidence } = await readDocument(imageBuffer, 'Aadhaar');
+  // Counts only: the card text and number never go to the logs
+  console.log(`[DocumentOCR] Aadhaar read: confidence ${confidence}, valid number ${extractAadhaarNumber(allText) ? 'found' : 'not found'}`);
 
   // Extract specific Aadhaar fields
   const fields = {
