@@ -23,7 +23,8 @@ Every attendance log is verified through three independent AI channels simultane
 | **ElevenLabs** | Spoken replies in every language with a voice, **including Kannada** (Polly has none). Scribe as STT fallback. The "Mitra Helpline" voice agent on WhatsApp/phone, with its LLM on Nodus | [`src/providers/tts.js`](src/providers/tts.js), [`agents/elevenlabs/`](agents/elevenlabs/), [`src/handlers/helplineRoutes.js`](src/handlers/helplineRoutes.js) |
 | **Agent37** | An always-on Welfare Ops Agent: AI triage notes on the review queue (recommendations only), a daily officer digest, and a weekly welfare-scheme refresh for the helpline | [`agents/agent37/`](agents/agent37/), [`src/handlers/agentRoutes.js`](src/handlers/agentRoutes.js) |
 
-See [docs/SPONSOR_PLAN.md](docs/SPONSOR_PLAN.md) for the plan and demo script, and
+See [docs/SPONSOR_PLAN.md](docs/SPONSOR_PLAN.md) for the plan and demo script,
+[docs/RENDER_NEON.md](docs/RENDER_NEON.md) for hosting on Render with Neon, and
 [docs/NODUS_SWITCH.md](docs/NODUS_SWITCH.md) for running before Nodus access and switching over.
 
 ### The Four Zeros

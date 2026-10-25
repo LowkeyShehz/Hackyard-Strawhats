@@ -20,7 +20,11 @@ if (!['s3', 'disk', 'memory'].includes(BACKEND)) {
 }
 const IS_DEMO = BACKEND === 'memory';
 const IS_DISK = BACKEND === 'disk';
-const s3Client = BACKEND === 's3' ? new S3Client({ region: config.aws.region }) : null;
+// AWS_ENDPOINT_URL_S3 points the client at an S3-compatible store (Neon storage, R2, MinIO), which
+// needs path-style bucket URLs; unset, this is plain AWS S3
+const s3Client = BACKEND === 's3'
+  ? new S3Client({ region: config.aws.region, forcePathStyle: Boolean(process.env.AWS_ENDPOINT_URL_S3) })
+  : null;
 
 // In-memory S3 mock for demo/local testing
 const memS3 = new Map();
