@@ -4,7 +4,7 @@
  * Face, geo and voice checks run in parallel; results merge into confidence-based routing.
  *
  * Invoked by Step Functions with specific task types:
- *   - face_verify: Rekognition CompareFaces against enrolled face
+ *   - face_verify: SFace match on the face bridge (or Rekognition CompareFaces) against the enrolled face
  *   - geo_verify: GPS extraction from EXIF + geo-fence check against Sites table
  *   - voice_verify: LLM extracts work details from voice transcription
  *   - fraud_check: Nodus Compute selfie analysis (near-duplicate, screen recapture)
@@ -28,8 +28,11 @@ import { complete } from '../providers/llm.js';
 import { withRetry } from '../utils/retryHelper.js';
 import { languageName } from '../utils/i18n.js';
 import { analyzeSelfie, fraudServiceEnabled, gpsFingerprint } from '../services/fraudSignals.js';
+import { faceProvider, matchFace } from '../providers/face.js';
 
-const rekognitionClient = new RekognitionClient({ region: config.aws.region });
+// Created on first use, so deployments on the face bridge never need AWS credentials
+let rekognition = null;
+const rekognitionClient = { send: (cmd) => (rekognition ??= new RekognitionClient({ region: config.aws.region })).send(cmd) };
 
 /** Pre-migration location of the reference selfie (expires with the rest of workers/) */
 const legacyEnrolledSelfieKey = (workerId) => `workers/${workerId}/selfie-latest.jpg`;
@@ -87,11 +90,19 @@ async function processFaceVerification(event) {
     };
   }
 
+  if (faceProvider() === 'none') {
+    return { success: false, confidence: 0, reason: 'face_check_unavailable' };
+  }
+
   // Download the check-in selfie
   const selfieBuffer = await downloadFromS3(
     bucket || config.buckets.mediaRaw,
     selfieKey,
   );
+
+  if (faceProvider() === 'bridge') {
+    return bridgeFaceMatch(worker, selfieBuffer);
+  }
 
   // Compare against the enrolled reference selfie stored during registration; workers enrolled
   // before the enrolled/ prefix existed still have it at the legacy key
@@ -157,6 +168,36 @@ async function processFaceVerification(event) {
       similarity: Math.round(match.Similarity),
       qualityBrightness: Math.round(match.Face?.Quality?.Brightness || 0),
       qualitySharpness: Math.round(match.Face?.Quality?.Sharpness || 0),
+    },
+  };
+}
+
+/** 1:1 match against the enrolled SFace embedding; a service failure routes to review, never rejects */
+async function bridgeFaceMatch(worker, selfieBuffer) {
+  if (!worker.face_embedding) {
+    return { success: false, confidence: 0, reason: 'face_check_unavailable' };
+  }
+  let match;
+  try {
+    match = await matchFace(worker.face_embedding, selfieBuffer);
+  } catch (err) {
+    console.error('[AttendanceProcessor] Face service failed:', err.message);
+    return { success: false, confidence: 0, reason: 'face_check_unavailable' };
+  }
+  if (!match.faceFound) {
+    return { success: false, confidence: 0, faceMatch: false, reason: 'no_face' };
+  }
+  return {
+    success: true,
+    confidence: match.similarity,
+    faceMatch: true,
+    provider: `sface:${match.backend}`,
+    details: {
+      similarity: Math.round(match.similarity),
+      ...(match.quality && {
+        qualityBrightness: Math.round(match.quality.brightness),
+        qualitySharpness: Math.round(match.quality.sharpness),
+      }),
     },
   };
 }
@@ -414,8 +455,12 @@ async function processMergeDecision(event) {
   let verificationStatus;
   let flaggedReasons = [];
 
-  // Face rules
-  if (faceResult?.reason === 'no_face') {
+  // Face rules. With no face check available (no model configured, or the face service is down)
+  // the day can still be logged, but only by an officer
+  const faceUnavailable = faceResult?.reason === 'face_check_unavailable';
+  if (faceUnavailable) {
+    flaggedReasons.push('Face check unavailable: compare the selfies');
+  } else if (faceResult?.reason === 'no_face') {
     flaggedReasons.push('No face found in selfie');
   } else if (faceConfidence < 60) {
     flaggedReasons.push(`Low face confidence: ${Math.round(faceConfidence)}%`);
@@ -477,7 +522,7 @@ async function processMergeDecision(event) {
 
   // Apply confidence routing
   // Off-hours is a flag only — it does not block auto-approval if scores are high
-  const hasHardFail = faceConfidence < 30 || (distance !== null && distance > (geoResult?.nearestSite?.radius || 500) * 2) || (voiceResult?.workDetails?.passcode_mismatch === true);
+  const hasHardFail = (!faceUnavailable && faceConfidence < 30) || (distance !== null && distance > (geoResult?.nearestSite?.radius || 500) * 2) || (voiceResult?.workDetails?.passcode_mismatch === true);
 
   if (hasHardFail) {
     verificationStatus = 'rejected';

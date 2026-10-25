@@ -51,7 +51,7 @@ test('a clean Nodus analysis auto-approves and stores the selfie fingerprint', a
   const worker = H.worker('919300000001');
   assert.equal(worker.selfie_history.length, 1);
   assert.equal(worker.selfie_history[0].phash, 'ab12');
-  assert.equal(worker.face_embedding, 'BBB=');
+  assert.equal(worker.face_embedding, 'ENROLLED', 'the enrolment embedding is kept, not replaced by a check-in');
   assert.ok(w.worker_id);
 });
 

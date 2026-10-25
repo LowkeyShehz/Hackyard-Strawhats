@@ -175,6 +175,19 @@ const config = Object.freeze({
     gpsHashKey: process.env.GPS_HASH_KEY || process.env.JWT_SECRET || '',
   },
 
+  // Face enrolment and matching (src/providers/face.js): 'bridge' (OpenCV SFace on the face +
+  // fraud bridge, moving to Nodus with it), 'rekognition' (AWS) or 'none' (officer review).
+  // Default: bridge when it is configured, else Rekognition when AWS credentials exist, else none.
+  face: {
+    provider: (() => {
+      const explicit = (process.env.FACE_PROVIDER || '').trim().toLowerCase();
+      if (['bridge', 'rekognition', 'none'].includes(explicit)) return explicit;
+      if (process.env.FRAUD_SERVICE_URL && process.env.FRAUD_SERVICE_TOKEN) return 'bridge';
+      if (process.env.AWS_ACCESS_KEY_ID || process.env.AWS_LAMBDA_FUNCTION_NAME) return 'rekognition';
+      return 'none';
+    })(),
+  },
+
   // Speech-to-text chain (see src/providers/stt.js), tried in order; providers without a key are
   // skipped
   stt: {

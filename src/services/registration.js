@@ -23,6 +23,7 @@ import {
   getStepPrompt,
 } from './voiceProcessor.js';
 import { withRetry } from '../utils/retryHelper.js';
+import { faceProvider, enrollFace } from '../providers/face.js';
 import { t, KN } from '../utils/i18n.js';
 import {
   extractAadhaarFields,
@@ -33,7 +34,9 @@ import {
 } from './documentOcr.js';
 
 const IS_DEMO = isDemoMode();
-const rekognitionClient = IS_DEMO ? null : new RekognitionClient({ region: config.aws.region });
+// Only the Rekognition face provider needs AWS
+const USE_REKOGNITION = !IS_DEMO && faceProvider() === 'rekognition';
+const rekognitionClient = USE_REKOGNITION ? new RekognitionClient({ region: config.aws.region }) : null;
 const COLLECTION_ID = config.rekognitionCollectionId;
 
 // Failed Aadhaar photos allowed before the worker is flagged for an admin
@@ -46,7 +49,7 @@ const MAX_AADHAAR_ATTEMPTS = 3;
 let collectionReady = false;
 
 async function ensureCollection() {
-  if (collectionReady || IS_DEMO) { collectionReady = true; return; }
+  if (collectionReady || !USE_REKOGNITION) { collectionReady = true; return; }
   try {
     await rekognitionClient.send(
       new CreateCollectionCommand({ CollectionId: COLLECTION_ID }),
@@ -348,8 +351,8 @@ export async function handleAadhaarUpload(workerId, imageBuffer, language = 'hi'
 // ─────────────────────────────────────────────────────────
 
 /**
- * Process worker selfie: Rekognition IndexFaces → store face vector (NOT raw image).
- * Store the face index ID; the enrollment selfie is kept for 1:1 comparison.
+ * Process worker selfie: enrol the face (SFace embedding via the face bridge, or Rekognition
+ * IndexFaces) and keep the enrollment selfie for 1:1 comparison at each check-in.
  * @param {string} workerId
  * @param {Buffer} imageBuffer
  * @param {string} language
@@ -361,13 +364,54 @@ export async function handleSelfieCapture(workerId, imageBuffer, language = 'hi'
   // Upload to S3 (raw — will be deleted by 90d lifecycle)
   await uploadWorkerMedia(workerId, 'selfie', imageBuffer, 'image/jpeg');
 
+  // Reject the selfie; any face already indexed in Rekognition from it is removed
+  const rejectSelfie = async (en, hi, kn, label, indexedFaceIds = []) => {
+    await deleteIndexedFaces(indexedFaceIds);
+    const responseText = t(language, { en, hi, kn });
+    const audioUrl = await generateAndUploadVoice(workerId, responseText, language, label);
+    return { success: false, faceId: null, responseText, audioUrl, nextStep: 'awaiting_selfie' };
+  };
+  const rejectFor = {
+    multiple_faces: (ids) => rejectSelfie(
+      'More than one face is in the photo. Please send a selfie with only your face.',
+      'Photo mein ek se zyada chehre hain. Kripya sirf apne chehre wala selfie bhejiye.',
+      KN.selfieMultipleFaces,
+      'selfie-multiple-faces',
+      ids,
+    ),
+    low_quality: (ids) => rejectSelfie(
+      'The selfie quality is low. Please take another photo in good lighting.',
+      'Selfie ki quality kam hai. Kripya achchi roshni mein dobara photo lein.',
+      KN.selfieLowQuality,
+      'selfie-quality',
+      ids,
+    ),
+    no_face: (ids) => rejectSelfie(
+      'No face detected. Please send a clear selfie showing your face.',
+      'Chehra dikhai nahi diya. Kripya apna chehra dikhate hue ek clear selfie bhejiye.',
+      KN.selfieNoFace,
+      'selfie-retry',
+      ids,
+    ),
+  };
+
   try {
     let faceId;
+    let faceEmbedding = null;
 
     if (IS_DEMO) {
       // Demo: simulate successful face indexing
       faceId = `demo-face-${workerId}-${Date.now()}`;
       console.log(`[Registration DEMO] Simulated face index: ${faceId}`);
+    } else if (faceProvider() === 'bridge') {
+      // SFace embedding on the face bridge (CPU today, Nodus Compute once it is switched on)
+      const enrolled = await enrollFace(imageBuffer);
+      if (!enrolled.ok) return rejectFor[enrolled.problem]();
+      faceId = 'sface';
+      faceEmbedding = enrolled.embedding;
+    } else if (faceProvider() === 'none') {
+      // No face model configured: every check-in goes to an officer with the selfies side by side
+      faceId = 'unverified';
     } else {
       // Index face in Rekognition collection
       const indexResult = await withRetry(
@@ -386,44 +430,22 @@ export async function handleSelfieCapture(workerId, imageBuffer, language = 'hi'
 
       const faceRecords = indexResult.FaceRecords || [];
       const unindexedFaces = indexResult.UnindexedFaces || [];
-
-      // Reject the selfie; any face already indexed from it is removed from the collection
-      const rejectSelfie = async (en, hi, kn, label) => {
-        await deleteIndexedFaces(faceRecords.map((r) => r.Face?.FaceId).filter(Boolean));
-        const responseText = t(language, { en, hi, kn });
-        const audioUrl = await generateAndUploadVoice(workerId, responseText, language, label);
-        return { success: false, faceId: null, responseText, audioUrl, nextStep: 'awaiting_selfie' };
-      };
+      const indexedIds = faceRecords.map((r) => r.Face?.FaceId).filter(Boolean);
 
       // MaxFaces 1 indexes the largest face and reports the rest as EXCEEDS_MAX_FACES
       if (faceRecords.length > 1 || unindexedFaces.some((f) => f.Reasons?.includes('EXCEEDS_MAX_FACES'))) {
-        return rejectSelfie(
-          'More than one face is in the photo. Please send a selfie with only your face.',
-          'Photo mein ek se zyada chehre hain. Kripya sirf apne chehre wala selfie bhejiye.',
-          KN.selfieMultipleFaces,
-          'selfie-multiple-faces',
-        );
+        return rejectFor.multiple_faces(indexedIds);
       }
 
       const quality = faceRecords[0]?.FaceDetail?.Quality;
       // No face indexed but one was detected: QualityFilter dropped it as too dark / blurry
       if ((faceRecords.length === 0 && unindexedFaces.length > 0)
         || (quality && (quality.Brightness < 30 || quality.Sharpness < 30))) {
-        return rejectSelfie(
-          'The selfie quality is low. Please take another photo in good lighting.',
-          'Selfie ki quality kam hai. Kripya achchi roshni mein dobara photo lein.',
-          KN.selfieLowQuality,
-          'selfie-quality',
-        );
+        return rejectFor.low_quality(indexedIds);
       }
 
       if (faceRecords.length === 0) {
-        return rejectSelfie(
-          'No face detected. Please send a clear selfie showing your face.',
-          'Chehra dikhai nahi diya. Kripya apna chehra dikhate hue ek clear selfie bhejiye.',
-          KN.selfieNoFace,
-          'selfie-retry',
-        );
+        return rejectFor.no_face(indexedIds);
       }
 
       faceId = faceRecords[0].Face.FaceId;
@@ -442,8 +464,8 @@ export async function handleSelfieCapture(workerId, imageBuffer, language = 'hi'
     await updateItem(
       config.tables.workers,
       { worker_id: workerId },
-      'SET face_vector = :faceId, updated_at = :ts',
-      { ':faceId': faceId, ':ts': new Date().toISOString() },
+      `SET face_vector = :faceId, updated_at = :ts${faceEmbedding ? ', face_embedding = :emb' : ''}`,
+      { ':faceId': faceId, ':ts': new Date().toISOString(), ...(faceEmbedding && { ':emb': faceEmbedding }) },
     );
 
     // Move to location step
@@ -465,7 +487,7 @@ export async function handleSelfieCapture(workerId, imageBuffer, language = 'hi'
 
 /** Remove faces from the collection (best effort: a leftover face only wastes an index slot) */
 async function deleteIndexedFaces(faceIds) {
-  if (IS_DEMO || faceIds.length === 0) return;
+  if (!USE_REKOGNITION || faceIds.length === 0) return;
   try {
     await rekognitionClient.send(new DeleteFacesCommand({ CollectionId: COLLECTION_ID, FaceIds: faceIds }));
   } catch (err) {
