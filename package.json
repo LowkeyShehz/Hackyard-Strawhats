@@ -4,7 +4,8 @@
     "description": "Voice-first WhatsApp concierge for construction worker welfare: verified attendance and signed work credentials",
     "type": "module",
     "scripts": {
-        "build": "sam build",
+        "build": "node -e \"console.log('No build step: the API runs from source')\"",
+        "sam:build": "sam build",
         "local": "sam local start-api",
         "test": "node --test \"tests/**/*.test.mjs\"",
         "lint": "eslint --ext .js,.mjs src/ tests/"
