@@ -4,8 +4,9 @@
 #   Files:  the API's Render disk, served as signed /files/ links (STORAGE_BACKEND=disk)
 #   OCR:    Tesseract in the API process (OCR_PROVIDER=tesseract)
 #   Voice:  ElevenLabs only (TTS_FALLBACK=none)
-# The one AWS service left is Rekognition face matching, reached with an IAM key (AWS_* below)
-# until face matching moves to the Nodus FaceNet embeddings.
+#   Faces:  OpenCV SFace on the face + fraud bridge (FACE_PROVIDER=bridge). No AWS anywhere.
+#   AI:     Groq until NODUS_API_KEY is set; then LLM, speech-to-text, faces and fraud checks
+#           move to Nodus Compute with no code change (see docs/NODUS_SWITCH.md)
 #
 # Values marked `sync: false` are secrets: Render asks for them when the Blueprint is first
 # applied, and they are then edited in the dashboard, never here.
@@ -96,8 +97,8 @@ services:
         value: 'true'
       - key: CERTIFICATE_THRESHOLD
         value: '3'
-      - key: REKOGNITION_COLLECTION_ID
-        value: nirman-mitra-workers
+      - key: FACE_PROVIDER
+        value: bridge
       - key: STT_PROVIDERS
         value: nodus,elevenlabs,groq
       - key: ELEVENLABS_TTS_MODEL
@@ -106,12 +107,6 @@ services:
         value: nodus
       - key: LLM_MODEL
         value: nodus/gpt-oss-120b
-      # IAM key for Rekognition face matching only (rekognition:CompareFaces, IndexFaces,
-      # DeleteFaces, CreateCollection)
-      - key: AWS_ACCESS_KEY_ID
-        sync: false
-      - key: AWS_SECRET_ACCESS_KEY
-        sync: false
       - key: PORTAL_URL
         sync: false
       - key: DEMO_PHONE_NUMBERS
@@ -128,6 +123,8 @@ services:
         sync: false
       - key: GROQ_API_KEY
         sync: false
+      # Leave empty until Nodus access arrives: the LLM runs on Groq and speech-to-text on
+      # ElevenLabs/Groq. Setting it moves both to Nodus.
       - key: NODUS_API_KEY
         sync: false
       - key: ELEVENLABS_API_KEY
@@ -135,7 +132,7 @@ services:
       # {"en":"<voice id>","hi":"<voice id>"}; other languages get text-only replies
       - key: ELEVENLABS_VOICE_IDS
         sync: false
-      # https://nirman-fraud-bridge.onrender.com (or empty to skip the selfie fraud check)
+      # https://nirman-fraud-bridge.onrender.com. Required: face matching runs on the bridge
       - key: FRAUD_SERVICE_URL
         sync: false
       - key: FRAUD_SERVICE_TOKEN
@@ -187,7 +184,8 @@ services:
     region: singapore
     plan: 0.5c-512mb
     rootDir: nodus
-    buildCommand: pip install -r requirements-bridge.txt
+    # Fetches the YuNet + SFace face models (~38 MB) into nodus/models at build time
+    buildCommand: pip install -r requirements-bridge.txt && python -c "import face; face.ensure_models()"
     startCommand: uvicorn bridge:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: checksPass
@@ -197,9 +195,31 @@ services:
       # Same value as the API's FRAUD_SERVICE_TOKEN
       - key: FRAUD_SERVICE_TOKEN
         sync: false
-      # Credentials for the Nodus SDK (what `nodus login` stores locally)
+      # Leave empty for now: SFace, pHash and the recapture check run here on CPU. Once
+      # nodus/app.py is deployed, setting this moves them to Nodus (falls back to CPU on errors).
+      # Credentials for the Nodus SDK (what `nodus login` stores locally).
       - key: NODUS_API_KEY
         sync: false
+
+  # ── Nightly fraud sweep (nodus/sweep.py) at 02:00 IST. Runs here on CPU until Nodus access;
+  #    then it moves to the Nodus job in nodus/jobs/fraud_sweep.yaml and this cron is suspended ──
+  - type: cron
+    name: nirman-fraud-sweep
+    runtime: python
+    region: singapore
+    schedule: '30 20 * * *'
+    rootDir: nodus
+    buildCommand: pip install numpy pillow "psycopg[binary]"
+    startCommand: python sweep.py
+    autoDeployTrigger: checksPass
+    envVars:
+      - fromGroup: nirman-mitra-backend
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nirman-mitra-db
+          property: connectionString
 
   # ── Admin dashboard / officer portal (static) ──
   - type: web

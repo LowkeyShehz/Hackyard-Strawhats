@@ -10,7 +10,7 @@ Every attendance log is verified through three independent AI channels simultane
 
 | Channel | AI/Cloud Service | What It Catches |
 |---|---|---|
-| **Face Match** | Amazon Rekognition | Buddy-punching, fake identities |
+| **Face Match** | OpenCV SFace on the face bridge (Nodus-ready; Rekognition optional) | Buddy-punching, fake identities |
 | **Geo-Fence** | GPS + Site matching | Off-site check-ins, spoofing |
 | **Voice Intent** | Nodus inference (Whisper + gpt-oss-120b), Groq fallback | Fake check-ins, scripted messages, unintelligible audio |
 | **Fraud signals** | Nodus Compute (GPU function + nightly job) | Re-sent gallery selfies, photos of screens, mock GPS, phone farms, one person under two numbers |
@@ -23,7 +23,8 @@ Every attendance log is verified through three independent AI channels simultane
 | **ElevenLabs** | Spoken replies in every language with a voice, **including Kannada** (Polly has none). Scribe as STT fallback. The "Mitra Helpline" voice agent on WhatsApp/phone, with its LLM on Nodus | [`src/providers/tts.js`](src/providers/tts.js), [`agents/elevenlabs/`](agents/elevenlabs/), [`src/handlers/helplineRoutes.js`](src/handlers/helplineRoutes.js) |
 | **Agent37** | An always-on Welfare Ops Agent: AI triage notes on the review queue (recommendations only), a daily officer digest, and a weekly welfare-scheme refresh for the helpline | [`agents/agent37/`](agents/agent37/), [`src/handlers/agentRoutes.js`](src/handlers/agentRoutes.js) |
 
-See [docs/SPONSOR_PLAN.md](docs/SPONSOR_PLAN.md) for the plan and demo script.
+See [docs/SPONSOR_PLAN.md](docs/SPONSOR_PLAN.md) for the plan and demo script, and
+[docs/NODUS_SWITCH.md](docs/NODUS_SWITCH.md) for running before Nodus access and switching over.
 
 ### The Four Zeros
 
@@ -41,7 +42,7 @@ flowchart LR
     W[Worker on WhatsApp] --> M[WhatsApp Cloud API]
     M --> G[Render web service<br/>src/server.js]
     G --> H[Message handler]
-    H --> R[Rekognition<br/>face 1:1]
+    H --> R[SFace face 1:1<br/>bridge, Nodus-ready]
     H --> T[Tesseract<br/>Aadhaar OCR]
     H --> S[Nodus Whisper<br/>STT, Scribe/Groq fallback]
     H --> L[Nodus LLM<br/>intent + voice checks]
@@ -73,7 +74,7 @@ flowchart LR
 |---|---|---|
 | Groq Whisper & LLM | Ultra-fast STT and Intent extraction | Extremely low cost / API tokens |
 | Render (API, cron, bridge, Postgres, disk) | Hosting and data | About $21/month; the dashboard is a free static site |
-| Amazon Rekognition | 1 `CompareFaces` per attendance log | ~$1.00 per 1,000 matches |
+| OpenCV SFace | Face enrolment and 1:1 match on the bridge CPU | No per-call cost |
 | Tesseract | Aadhaar/passbook OCR in the API process | No per-page cost |
 | ElevenLabs | Spoken replies, cached by content on the disk | Plan credits |
 
@@ -82,8 +83,8 @@ flowchart LR
 - **Render:** the API and webhook (`src/server.js`), the reminder cron job, the Nodus fraud bridge,
   the dashboard, Postgres for all data, and a disk for worker media, certificates and cached voice
   replies (`render.yaml`).
-- **Amazon Rekognition:** face matching (1:1), the one AWS service left, until it moves to the
-  FaceNet embeddings the Nodus fraud function already computes.
+- **Faces:** OpenCV SFace on the bridge (`FACE_PROVIDER=bridge`). No AWS is needed;
+  `FACE_PROVIDER=rekognition` still works with AWS keys.
 - **Nodus, ElevenLabs, Groq:** LLM, speech-to-text, voices and the fraud checks (see above).
 - **Backend switches:** `DB_BACKEND` (postgres | dynamodb), `STORAGE_BACKEND` (disk | s3),
   `OCR_PROVIDER` (tesseract | textract) and `TTS_FALLBACK` (none | polly). Each defaults to the
@@ -94,8 +95,8 @@ flowchart LR
 ### Prerequisites
 - Node.js 20+
 - WhatsApp Cloud API App (Meta Developer Console)
-- Render account; an AWS IAM key for Rekognition
-- Groq / Nodus and ElevenLabs API keys
+- Render account (no AWS needed)
+- Groq and ElevenLabs API keys (Nodus optional: see [docs/NODUS_SWITCH.md](docs/NODUS_SWITCH.md))
 
 ### Configuration
 Copy `.env.example` to `.env` and fill in your values. Never commit real secrets. On Render the
@@ -103,18 +104,16 @@ values are set per service (`render.yaml` marks every secret `sync: false`).
 
 ### Deploy
 
-**1. Rekognition key (once).** Create an IAM user with only `rekognition:CompareFaces`,
-`IndexFaces`, `DeleteFaces` and `CreateCollection`, and an access key for it. (The
-`RenderRuntimeUser` in `template.yaml` is exactly this user, if you deploy that stack.)
-
-**2. Render.** In the Render dashboard choose **New → Blueprint**, pick this repo, and fill in the
-secrets it asks for (the Rekognition key and the values from `.env.example`). It creates:
+**1. Render.** In the Render dashboard choose **New → Blueprint**, pick this repo, and fill in the
+secrets it asks for (the values from `.env.example`; leave `NODUS_API_KEY` empty until Nodus
+access arrives). It creates:
 
 | Resource | What |
 |---|---|
 | `nirman-mitra-api` | WhatsApp webhook, all `/api/*` routes, `/files/` links; 1 GB disk |
 | `nirman-mitra-reminders` | Proactive reminders and expired-row cleanup, every 15 minutes |
-| `nirman-fraud-bridge` | Node → Nodus selfie fraud check |
+| `nirman-fraud-bridge` | Face enrolment/matching and selfie fraud checks (CPU now, Nodus later) |
+| `nirman-fraud-sweep` | Nightly fraud sweep at 02:00 IST (moves to a Nodus job later) |
 | `nirman-mitra-admin` | Dashboard / officer portal (static) |
 | `nirman-mitra-db` | Postgres for all data (one `items` table, created on first use) |
 
@@ -122,11 +121,11 @@ Then point things at the new URLs: `VITE_API_URL` (dashboard) = the API URL, `PO
 `FRAUD_SERVICE_URL` (API) = the dashboard and bridge URLs. After that, every push to `main`
 deploys once CI passes.
 
-**3. WhatsApp.** In the Meta app set the callback URL to
+**2. WhatsApp.** In the Meta app set the callback URL to
 `https://<nirman-mitra-api host>/webhook/whatsapp`, use the same `WHATSAPP_VERIFY_TOKEN`, and
 subscribe to the `messages` field.
 
-**4. Demo data.** Seed sites with `scripts/seed-sites.mjs`, and the fraud scenarios with
+**3. Demo data.** Seed sites with `scripts/seed-sites.mjs`, and the fraud scenarios with
 `DB_BACKEND=postgres DATABASE_URL=<external URL> node scripts/seed-fraud-demo.mjs`.
 
 **Adaption Visualize.** The dashboard's *Explore in Adaption Visualize* card downloads
