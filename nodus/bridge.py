@@ -4,6 +4,7 @@ Face + fraud service for the Node.js backend (runs on Render).
     POST /face-embed       {"image_b64"}                          -> enrolment embedding (replaces Rekognition IndexFaces)
     POST /face-match       {"image_b64", "enrolled_embedding"}    -> 0-100 match score (replaces Rekognition CompareFaces)
     POST /analyze-selfie   {"image_b64", "history"}               -> near-duplicate / recapture fraud signals
+    POST /ocr              {"image_b64"}                          -> text lines read from an Aadhaar card / passbook (RapidOCR)
     GET  /health
 
 Backend (FRAUD_BACKEND):
@@ -109,7 +110,8 @@ def _local_analyze(image_b64, history):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "backend": BACKEND}
+    from ocr import available
+    return {"ok": True, "backend": BACKEND, "ocr": available()}
 
 
 def _with_b64(result: dict) -> dict:
@@ -141,3 +143,17 @@ def face_match(req: MatchRequest, authorization: str | None = Header(default=Non
 def analyze_selfie(req: SelfieRequest, authorization: str | None = Header(default=None)):
     _check(authorization, req.image_b64)
     return _on_nodus("analyze_selfie", _local_analyze, req.image_b64, req.history[-30:])
+
+
+@app.post("/ocr")
+def ocr_document(req: ImageRequest, authorization: str | None = Header(default=None)):
+    """Document OCR runs on this server's CPU only: card images are never sent anywhere else."""
+    _check(authorization, req.image_b64)
+    import ocr
+    if not ocr.available():
+        raise HTTPException(503, "OCR is not installed on this bridge")
+    try:
+        return {**ocr.read_text(base64.b64decode(req.image_b64)), "backend": "local"}
+    except (ValueError, OSError) as err:  # not an image
+        raise HTTPException(422, f"unreadable image: {err}") from err
+

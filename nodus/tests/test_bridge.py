@@ -84,3 +84,37 @@ def test_similarity_score_mapping():
     assert face.similarity_score(0.9) == 100.0
     with pytest.raises(Exception):
         face._decode(b"not an image")
+
+
+def test_ocr_endpoint_reads_lines_and_needs_the_token(monkeypatch):
+    import ocr
+    bridge = load_bridge(monkeypatch)
+    monkeypatch.setattr(ocr, "available", lambda: True)
+
+    class FakeEngine:
+        def __call__(self, image):
+            return [([[0, 0]], "Government of India", 0.98), ([[0, 9]], " 5350 1230 8303 ", 0.93), ([[0, 20]], "   ", 0.5)], None
+
+    monkeypatch.setattr(ocr, "_engine", FakeEngine())
+    from PIL import Image
+    import io
+    buf = io.BytesIO()
+    Image.new("RGB", (40, 30), "white").save(buf, "JPEG")
+    img = base64.b64encode(buf.getvalue()).decode()
+    client = TestClient(bridge.app)
+    assert client.post("/ocr", json={"image_b64": img}).status_code == 401
+    out = client.post("/ocr", json={"image_b64": img}, headers=AUTH).json()
+    assert out["text"] == "Government of India\n5350 1230 8303"
+    assert [l["score"] for l in out["lines"]] == [0.98, 0.93]
+    assert out["confidence"] == 95.5 and out["backend"] == "local"
+    assert client.get("/health").json()["ocr"] is True
+    assert client.post("/ocr", json={"image_b64": base64.b64encode(b"junk").decode()}, headers=AUTH).status_code == 422
+
+
+def test_ocr_is_503_when_rapidocr_is_not_installed(monkeypatch):
+    import ocr
+    bridge = load_bridge(monkeypatch)
+    monkeypatch.setattr(ocr, "available", lambda: False)
+    client = TestClient(bridge.app)
+    assert client.post("/ocr", json={"image_b64": IMG}, headers=AUTH).status_code == 503
+    assert client.get("/health").json()["ocr"] is False
