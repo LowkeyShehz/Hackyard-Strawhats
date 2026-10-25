@@ -1,6 +1,6 @@
 # Nirman Mitra: Product Requirements Document
 
-**Team:** StrawHats · **Event:** Build for Billions · **Status:** Draft v1
+**Team:** StrawHats · **Event:** hackyard IITG · **Status:** Draft v1
 
 ---
 
