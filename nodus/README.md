@@ -6,7 +6,7 @@ GPU and batch workloads that close the anti-misuse gaps in PRD §8. Everything h
 | File | Runs as | What it does |
 |---|---|---|
 | `fraud_core.py` | library | All detectors. Pure logic, plus lazily loaded models |
-| `app.py` | Nodus Functions app `nirman-fraud` | `analyze_selfie` on every check-in (GPU): pHash + DINOv2 near-duplicate, FaceNet embedding, screen-recapture score |
+| `app.py` | Nodus Functions app `nirman-fraud` | `analyze_selfie` on every check-in (GPU): pHash + DINOv2 near-duplicate, SFace face embedding, screen-recapture score |
 | `jobs/fraud_sweep.yaml` + `sweep.py` | Nodus Job (nightly) | Static GPS fixes, impossible travel, phone farms, same face under two worker IDs. Writes `fraud_flags` to AttendanceLogs |
 | `bridge.py` | small HTTPS service | Lets the Node.js Lambda call `analyze_selfie` (Nodus functions are called from Python) |
 

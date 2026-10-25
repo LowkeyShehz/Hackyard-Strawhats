@@ -1,5 +1,8 @@
-# HTTP bridge only (bridge.py on Render). The models run on Nodus, so no torch here;
-# requirements.txt has the full set for the Nodus functions and FRAUD_LOCAL=1 runs.
+# Face + fraud bridge (bridge.py on Render). The local backend runs OpenCV SFace, pHash and the
+# recapture check on CPU (no torch); nodus-compute is used once NODUS_API_KEY is set.
 nodus-compute
 fastapi>=0.110
 uvicorn>=0.29
+numpy>=1.26
+pillow>=10.0
+opencv-python-headless>=4.9

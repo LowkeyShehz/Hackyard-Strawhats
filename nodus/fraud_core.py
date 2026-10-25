@@ -4,7 +4,7 @@ Nirman Mitra — fraud detection core (runs on Nodus compute).
 Closes the anti-misuse gaps listed in PRD §8:
   * gallery / re-sent selfies      -> perceptual near-duplicate matching (pHash + DINOv2)
   * photo of a photo or a screen   -> recapture score (moire / periodic high-frequency energy)
-  * one person, two numbers        -> face embedding clusters across workers (FaceNet)
+  * one person, two numbers        -> face embedding clusters across workers (SFace)
   * mock-location apps             -> identical GPS fixes on different days, impossible travel
   * one phone, many workers        -> several workers checking in at one spot within seconds
 
@@ -25,7 +25,7 @@ from PIL import Image
 # Thresholds (tuned for WhatsApp-compressed 1600px selfies; revisit with real data)
 PHASH_NEAR_DUP_BITS = 8          # pHash hamming distance at or below this = same picture
 EMBED_NEAR_DUP_COSINE = 0.95     # DINOv2 cosine at or above this = same picture, re-encoded/cropped
-FACE_SAME_PERSON_COSINE = 0.80   # FaceNet cosine at or above this = same person
+FACE_SAME_PERSON_COSINE = 0.40   # SFace cosine at or above this = same person (OpenCV suggests 0.363)
 RECAPTURE_FLAG_SCORE = 0.6       # recapture score at or above this = likely photo of a screen
 IMPOSSIBLE_SPEED_KMH = 120.0     # faster than this between two check-ins is not plausible
 STATIC_GPS_MIN_DAYS = 3          # identical fix on this many distinct days = mock location
@@ -127,22 +127,12 @@ def image_embedding(img: Image.Image) -> np.ndarray:
     return vec / (np.linalg.norm(vec) + 1e-9)
 
 
-def face_embedding(img: Image.Image) -> np.ndarray | None:
-    """FaceNet (VGGFace2) embedding of the largest face, or None when no face is found."""
-    import torch
-    from facenet_pytorch import MTCNN, InceptionResnetV1
-    if "face" not in _models:
-        _models["face"] = (
-            MTCNN(image_size=160, margin=20, device=_device()),
-            InceptionResnetV1(pretrained="vggface2").to(_device()).eval(),
-        )
-    detector, encoder = _models["face"]
-    crop = detector(img)
-    if crop is None:
-        return None
-    with torch.no_grad():
-        vec = encoder(crop.unsqueeze(0).to(_device()))[0].cpu().numpy()
-    return vec / (np.linalg.norm(vec) + 1e-9)
+def face_embedding(image_bytes: bytes) -> np.ndarray | None:
+    """SFace embedding of the largest face (see face.py), or None when no face is found. The
+    same model enrols workers, so these embeddings compare directly with the enrolled one."""
+    from face import embed_face
+    vec = embed_face(image_bytes)["embedding"]
+    return np.asarray(vec, dtype=np.float32) if vec is not None else None
 
 
 # ─────────────────────────────────────────────────────────
@@ -170,11 +160,16 @@ def find_near_duplicate(selfie_phash: str, selfie_embedding: np.ndarray | None, 
     return best
 
 
-def analyze_selfie(image_bytes: bytes, history: list[dict], use_models: bool = True) -> dict:
+def analyze_selfie(image_bytes: bytes, history: list[dict], use_models: bool = True,
+                   image_embeddings: bool = False) -> dict:
+    """
+    use_models:       run the SFace face model (CPU, ~40 ms)
+    image_embeddings: also run DINOv2 for crop/re-encode-robust near-duplicates (GPU, Nodus)
+    """
     img = load_image(image_bytes)
     selfie_phash = phash(img)
-    emb = image_embedding(img) if use_models else None
-    face = face_embedding(img) if use_models else None
+    emb = image_embedding(img) if use_models and image_embeddings else None
+    face = face_embedding(image_bytes) if use_models else None
     score = recapture_score(img)
     dup = find_near_duplicate(selfie_phash, emb, history)
 
