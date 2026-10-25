@@ -16,6 +16,14 @@
       "longitude": 77.5946,
       "radius_meters": 500,
       "is_active": true
+    },
+    {
+      "site_id": "DEMO-IIT-GUWAHATI",
+      "name": "[DEMO] IIT Guwahati (Hackyard venue)",
+      "latitude": 26.1878,
+      "longitude": 91.6916,
+      "radius_meters": 1500,
+      "is_active": true
     }
   ]
 }

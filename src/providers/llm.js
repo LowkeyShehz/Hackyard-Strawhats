@@ -3,7 +3,7 @@
  * Single entry point for all LLM calls: complete({ system, prompt, json }).
  * Provider selected by LLM_PROVIDER ('nodus' or 'groq'). Both speak the OpenAI chat completions
  * API; when the primary fails the call is retried once on LLM_FALLBACK_PROVIDER. Responses cached
- * in the LLM response cache DynamoDB table.
+ * in the LLM response cache table.
  *
  * Usage:
  *   import { complete } from '../providers/llm.js';
@@ -11,13 +11,8 @@
  */
 
 import { createHash } from 'crypto';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import config from '../utils/config.js';
-
-const ddbDocClient = DynamoDBDocumentClient.from(
-  new DynamoDBClient({ region: config.aws.region }),
-);
+import { getItem, putItem } from '../utils/dynamodb.js';
 
 const TIMEOUT_MS = 10000;
 // gpt-oss reasoning tokens count against max_tokens (~200 even at low effort, more for Indic
@@ -34,11 +29,9 @@ function buildCacheKey(parts) {
 
 async function cacheGet(hash) {
   try {
-    const result = await ddbDocClient.send(
-      new GetCommand({ TableName: config.tables.bedrockCache, Key: { input_hash: hash } }),
-    );
-    if (result.Item && result.Item.ttl > Math.floor(Date.now() / 1000)) {
-      return result.Item.response_text;
+    const item = await getItem(config.tables.bedrockCache, { input_hash: hash });
+    if (item && item.ttl > Math.floor(Date.now() / 1000)) {
+      return item.response_text;
     }
   } catch (err) {
     console.warn('[LLM] Cache read failed:', err.message);
@@ -48,17 +41,12 @@ async function cacheGet(hash) {
 
 async function cachePut(hash, responseText, ttlSeconds) {
   try {
-    await ddbDocClient.send(
-      new PutCommand({
-        TableName: config.tables.bedrockCache,
-        Item: {
-          input_hash: hash,
-          response_text: responseText,
-          ttl: Math.floor(Date.now() / 1000) + ttlSeconds,
-          created_at: new Date().toISOString(),
-        },
-      }),
-    );
+    await putItem(config.tables.bedrockCache, {
+      input_hash: hash,
+      response_text: responseText,
+      ttl: Math.floor(Date.now() / 1000) + ttlSeconds,
+      created_at: new Date().toISOString(),
+    });
   } catch (err) {
     console.warn('[LLM] Cache write failed:', err.message);
   }

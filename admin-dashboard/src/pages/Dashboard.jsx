@@ -6,6 +6,7 @@ import {
 import api from '../utils/api';
 import { networkErrorMessage } from '../utils/events';
 import { UsersIcon, CameraIcon, ClockIcon, CertificateIcon } from '../components/Icons';
+import AdaptionExport from '../components/AdaptionExport';
 
 export default function Dashboard() {
     const [stats, setStats] = useState(null);
@@ -229,6 +230,8 @@ export default function Dashboard() {
                     </div>
                 </div>
             )}
+
+            <AdaptionExport />
         </div>
     );
 }

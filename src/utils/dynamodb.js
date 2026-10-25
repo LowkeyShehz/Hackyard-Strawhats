@@ -1,9 +1,9 @@
 /**
- * Nirman Mitra — DynamoDB Utility
- * DocumentClient wrapper with CRUD helpers for all 6 tables.
- *
- * In demo/dev mode (ENVIRONMENT=dev), all calls are intercepted by an
- * in-memory store so no real AWS credentials or DynamoDB are required.
+ * Nirman Mitra — Data helpers
+ * CRUD helpers for all tables, written against DynamoDB's API and expressions. config.dbBackend
+ * picks where they run: 'dynamodb' (DocumentClient), 'postgres' (utils/postgres.js, same
+ * expressions and key schemas) or 'memory' (an in-memory store for local demo runs, so no
+ * database or credentials are required).
  */
 
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -16,13 +16,15 @@ import {
   DeleteCommand,
   ScanCommand,
 } from '@aws-sdk/lib-dynamodb';
-import config, { isDemoMode } from './config.js';
+import config from './config.js';
+import { postgresDb } from './postgres.js';
 
 // ─────────────────────────────────────────────────────────
 // In-Memory Mock Store (demo / local testing only)
 // ─────────────────────────────────────────────────────────
 
-const IS_DEMO = isDemoMode();
+const BACKEND = config.dbBackend;
+const IS_DEMO = BACKEND === 'memory';
 
 // Map<tableName, Map<compositeKey, item>>
 const memStore = new Map();
@@ -153,11 +155,14 @@ const mockDb = {
 };
 
 // ─────────────────────────────────────────────────────────
-// Real DynamoDB client (used in staging / prod only)
+// Backend selection: an alternative store, or the real DynamoDB client
 // ─────────────────────────────────────────────────────────
 
-const client = IS_DEMO ? null : new DynamoDBClient({ region: config.aws.region });
-const docClient = IS_DEMO ? null : DynamoDBDocumentClient.from(client, {
+const alt = { memory: mockDb, postgres: postgresDb, dynamodb: null }[BACKEND];
+if (alt === undefined) throw new Error(`Unknown DB_BACKEND "${BACKEND}" (use dynamodb, postgres or memory)`);
+
+const client = BACKEND === 'dynamodb' ? new DynamoDBClient({ region: config.aws.region }) : null;
+const docClient = client && DynamoDBDocumentClient.from(client, {
   marshallOptions: { removeUndefinedValues: true },
 });
 
@@ -175,7 +180,7 @@ const docClient = IS_DEMO ? null : DynamoDBDocumentClient.from(client, {
  * @param {object} [expressionNames] - Names referenced by the condition, e.g. { '#a': 'status' }
  */
 export async function putItem(tableName, item, conditionExpression, expressionValues, expressionNames) {
-  if (IS_DEMO) return mockDb.putItem(tableName, item, conditionExpression, expressionValues, expressionNames);
+  if (alt) return alt.putItem(tableName, item, conditionExpression, expressionValues, expressionNames);
   await docClient.send(new PutCommand({
     TableName: tableName,
     Item: item,
@@ -192,7 +197,7 @@ export async function putItem(tableName, item, conditionExpression, expressionVa
  * @param {object} key - e.g. { worker_id: '123' } or { worker_id: '123', log_date: '2026-03-01' }
  */
 export async function getItem(tableName, key) {
-  if (IS_DEMO) return mockDb.getItem(tableName, key);
+  if (alt) return alt.getItem(tableName, key);
   const result = await docClient.send(new GetCommand({ TableName: tableName, Key: key }));
   return result.Item || null;
 }
@@ -206,7 +211,7 @@ export async function getItem(tableName, key) {
  * @param {object} [options] - Additional options (Limit, ScanIndexForward, FilterExpression, etc.)
  */
 export async function queryItems(tableName, keyConditionExpression, expressionValues, indexName, options = {}) {
-  if (IS_DEMO) return mockDb.queryItems(tableName, keyConditionExpression, expressionValues, indexName, options);
+  if (alt) return alt.queryItems(tableName, keyConditionExpression, expressionValues, indexName, options);
   const params = {
     TableName: tableName,
     KeyConditionExpression: keyConditionExpression,
@@ -233,9 +238,7 @@ export async function queryItems(tableName, keyConditionExpression, expressionVa
  * @param {object} [expressionNames] - e.g. { '#name': 'name' }
  */
 export async function updateItem(tableName, key, updateExpression, expressionValues, expressionNames, conditionExpression) {
-  if (IS_DEMO) {
-    return mockDb.updateItem(tableName, key, updateExpression, expressionValues, expressionNames, conditionExpression);
-  }
+  if (alt) return alt.updateItem(tableName, key, updateExpression, expressionValues, expressionNames, conditionExpression);
   const params = {
     TableName: tableName,
     Key: key,
@@ -259,7 +262,7 @@ export async function updateItem(tableName, key, updateExpression, expressionVal
  * @param {object} key
  */
 export async function deleteItem(tableName, key) {
-  if (IS_DEMO) return mockDb.deleteItem(tableName, key);
+  if (alt) return alt.deleteItem(tableName, key);
   await docClient.send(new DeleteCommand({ TableName: tableName, Key: key }));
 }
 
@@ -275,7 +278,7 @@ const DEFAULT_SCAN_MAX_ITEMS = 10000;
  * @param {number} [scanOptions.maxItems=10000] - Stop after this many items
  */
 export async function scanTable(tableName, options = {}, { maxItems = DEFAULT_SCAN_MAX_ITEMS } = {}) {
-  if (IS_DEMO) return (await mockDb.scanTable(tableName, options)).slice(0, maxItems);
+  if (alt) return (await alt.scanTable(tableName, options, { maxItems })).slice(0, maxItems);
   const items = [];
   let startKey;
   do {
@@ -300,6 +303,7 @@ export async function scanTable(tableName, options = {}, { maxItems = DEFAULT_SC
  * @returns {Promise<{ items: object[], lastEvaluatedKey: object|null }>}
  */
 export async function scanPage(tableName, options = {}) {
+  if (BACKEND === 'postgres') return postgresDb.scanPage(tableName, options);
   if (IS_DEMO) {
     const all = await mockDb.scanTable(tableName, options);
     const start = options.ExclusiveStartKey ? Number(options.ExclusiveStartKey._offset) || 0 : 0;

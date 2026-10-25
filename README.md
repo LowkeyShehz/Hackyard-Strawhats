@@ -29,7 +29,7 @@ See [docs/SPONSOR_PLAN.md](docs/SPONSOR_PLAN.md) for the plan and demo script.
 
 | Principle | How |
 |---|---|
-| **Zero Literacy** | Voice-first via WhatsApp voice notes + Amazon Polly TTS (or native text) |
+| **Zero Literacy** | Voice-first via WhatsApp voice notes + ElevenLabs spoken replies (or native text) |
 | **Zero Downloads** | WhatsApp only — no app installation required |
 | **Zero Contractor Dependency** | AI self-verification replaces employer sign-off |
 | **Zero Typing** | Voice input + camera — no text entry required |
@@ -39,19 +39,19 @@ See [docs/SPONSOR_PLAN.md](docs/SPONSOR_PLAN.md) for the plan and demo script.
 ```mermaid
 flowchart LR
     W[Worker on WhatsApp] --> M[WhatsApp Cloud API]
-    M --> G[API Gateway]
-    G --> H[Lambda: message handler]
+    M --> G[Render web service<br/>src/server.js]
+    G --> H[Message handler]
     H --> R[Rekognition<br/>face 1:1]
-    H --> T[Textract<br/>Aadhaar OCR]
+    H --> T[Tesseract<br/>Aadhaar OCR]
     H --> S[Nodus Whisper<br/>STT, Scribe/Groq fallback]
     H --> L[Nodus LLM<br/>intent + voice checks]
-    H --> P[ElevenLabs TTS<br/>spoken replies, Polly fallback]
+    H --> P[ElevenLabs TTS<br/>English + Hindi voices]
     H --> F[Nodus GPU function<br/>selfie fraud check]
     J[Nodus nightly job<br/>fraud sweep] --> D
     AG[Agent37 ops agent] --> G
     EL[ElevenLabs helpline agent] --> G
-    H --> D[(DynamoDB)]
-    H --> B[(S3)]
+    H --> D[(Render Postgres)]
+    H --> B[(Render disk<br/>signed file links)]
     O[Officer / Admin browser] --> A[React dashboard<br/>on Render]
     A --> G
 
@@ -62,9 +62,8 @@ flowchart LR
 
 | Decision | Choice | Why Not Alternative |
 |---|---|---|
-| **Database** | DynamoDB | RDS adds VPC cold starts and fixed costs; DynamoDB scales to zero. |
+| **Database** | Render Postgres | Same platform and Blueprint as the API. The data helpers keep DynamoDB's API and expressions (`src/utils/postgres.js`), so `DB_BACKEND=dynamodb` still runs the Lambda stack. |
 | **Compute** | Render web service + cron job | One always-on Node process (`src/server.js`) runs the same handlers with no cold starts; the Lambda stack stays deployable as a standby. |
-| **Orchestration** | AWS Step Functions | SQS chaining loses state easily; Step Functions gives visual debugging and parallel branch execution. |
 | **LLM & STT** | Groq (Whisper + Llama/GPT-OSS) | Amazon Transcribe was too slow (~10-20s polling). Groq Whisper transcribes in ~1 second. |
 | **Frontend** | Render static site | Deploys from the same Blueprint (`render.yaml`) as the API, after CI passes. |
 
@@ -73,60 +72,51 @@ flowchart LR
 | Component | Description | Cost Profile |
 |---|---|---|
 | Groq Whisper & LLM | Ultra-fast STT and Intent extraction | Extremely low cost / API tokens |
-| Amazon DynamoDB | On-demand state management and logs | PAY_PER_REQUEST, scales to zero |
-| AWS Lambda | Event-driven compute | Free tier covers most startup traffic |
+| Render (API, cron, bridge, Postgres, disk) | Hosting and data | About $21/month; the dashboard is a free static site |
 | Amazon Rekognition | 1 `CompareFaces` per attendance log | ~$1.00 per 1,000 matches |
-| Amazon Textract | Only during worker onboarding (Aadhaar/Passbook) | ~$1.50 per 1,000 pages |
-| Amazon Polly | Text-to-Speech replies (Hindi, etc.) | Pay per character, heavily cached |
+| Tesseract | Aadhaar/passbook OCR in the API process | No per-page cost |
+| ElevenLabs | Spoken replies, cached by content on the disk | Plan credits |
 
-### AWS Services Utilized
+### Where Things Run
 
-- **Amazon Rekognition:** Facial verification (1:1 matching) + liveness/quality detection.
-- **Amazon Textract:** OCR for Aadhaar and Bank Passbooks during onboarding.
-- **Amazon Polly:** Neural TTS for voice replies in Indian languages.
-- **Amazon S3:** Raw media, processed output, and generated PDF certificates.
-- **Amazon DynamoDB:** User state, attendance logs, and site definitions.
-- **AWS Lambda:** Serverless handlers for webhooks and business logic.
-- **AWS Step Functions:** Asynchronous workflow orchestration.
-- **Amazon SQS:** Decoupled webhook processing with Dead Letter Queues (DLQ).
-- **Amazon API Gateway:** REST APIs for WhatsApp webhooks and Admin dashboard.
-- **AWS KMS:** Encryption of sensitive data (like Aadhaar images).
-- **AWS CloudFormation (SAM):** Infrastructure as Code (single `template.yaml`).
-- **Render:** Hosts the API, the reminder cron job, the Nodus fraud bridge and the React dashboard (`render.yaml`).
+- **Render:** the API and webhook (`src/server.js`), the reminder cron job, the Nodus fraud bridge,
+  the dashboard, Postgres for all data, and a disk for worker media, certificates and cached voice
+  replies (`render.yaml`).
+- **Amazon Rekognition:** face matching (1:1), the one AWS service left, until it moves to the
+  FaceNet embeddings the Nodus fraud function already computes.
+- **Nodus, ElevenLabs, Groq:** LLM, speech-to-text, voices and the fraud checks (see above).
+- **Backend switches:** `DB_BACKEND` (postgres | dynamodb), `STORAGE_BACKEND` (disk | s3),
+  `OCR_PROVIDER` (tesseract | textract) and `TTS_FALLBACK` (none | polly). Each defaults to the
+  original AWS service, so `template.yaml` still deploys the Lambda stack as a standby.
 
 ## Quick Start
 
 ### Prerequisites
 - Node.js 20+
-- AWS CLI v2 and AWS SAM CLI
 - WhatsApp Cloud API App (Meta Developer Console)
-- Groq API Key
+- Render account; an AWS IAM key for Rekognition
+- Groq / Nodus and ElevenLabs API keys
 
 ### Configuration
-Copy `.env.example` to `.env` and fill in your values. Never commit real secrets. In AWS, these values are passed to the stack via SAM parameters (`NoEcho`).
+Copy `.env.example` to `.env` and fill in your values. Never commit real secrets. On Render the
+values are set per service (`render.yaml` marks every secret `sync: false`).
 
 ### Deploy
 
-The app runs on Render; the data (DynamoDB, S3) and the AI services stay on AWS.
-
-**1. AWS stack (once, then on every `template.yaml` change).** Creates the tables, buckets and
-the `RenderRuntimeUser` IAM user. The `Deploy AWS stack` workflow does this from GitHub; by hand:
-
-```bash
-sam build && sam deploy --guided
-aws iam create-access-key --user-name <RenderRuntimeUserName output>
-```
+**1. Rekognition key (once).** Create an IAM user with only `rekognition:CompareFaces`,
+`IndexFaces`, `DeleteFaces` and `CreateCollection`, and an access key for it. (The
+`RenderRuntimeUser` in `template.yaml` is exactly this user, if you deploy that stack.)
 
 **2. Render.** In the Render dashboard choose **New → Blueprint**, pick this repo, and fill in the
-secrets it asks for (the access key from step 1, the bucket names from the stack outputs, and the
-values from `.env.example`). It creates four services from `render.yaml`:
+secrets it asks for (the Rekognition key and the values from `.env.example`). It creates:
 
-| Service | What |
+| Resource | What |
 |---|---|
-| `nirman-mitra-api` | WhatsApp webhook + all `/api/*` routes |
-| `nirman-mitra-reminders` | Proactive reminders, every 15 minutes |
+| `nirman-mitra-api` | WhatsApp webhook, all `/api/*` routes, `/files/` links; 1 GB disk |
+| `nirman-mitra-reminders` | Proactive reminders and expired-row cleanup, every 15 minutes |
 | `nirman-fraud-bridge` | Node → Nodus selfie fraud check |
 | `nirman-mitra-admin` | Dashboard / officer portal (static) |
+| `nirman-mitra-db` | Postgres for all data (one `items` table, created on first use) |
 
 Then point things at the new URLs: `VITE_API_URL` (dashboard) = the API URL, `PORTAL_URL` and
 `FRAUD_SERVICE_URL` (API) = the dashboard and bridge URLs. After that, every push to `main`
@@ -136,11 +126,19 @@ deploys once CI passes.
 `https://<nirman-mitra-api host>/webhook/whatsapp`, use the same `WHATSAPP_VERIFY_TOKEN`, and
 subscribe to the `messages` field.
 
+**4. Demo data.** Seed sites with `scripts/seed-sites.mjs`, and the fraud scenarios with
+`DB_BACKEND=postgres DATABASE_URL=<external URL> node scripts/seed-fraud-demo.mjs`.
+
+**Adaption Visualize.** The dashboard's *Explore in Adaption Visualize* card downloads
+pseudonymised check-in and fraud datasets (`/api/admin/export/*.csv`, no names, phone numbers,
+Aadhaar details or GPS) to upload to [Adaption Visualize](https://www.adaptionlabs.ai/).
+
 ### Run Locally
 
 ```bash
 npm install
 node src/server.js          # API on :3001, in-memory demo store when ENVIRONMENT=dev
+                            # (DB_BACKEND=postgres DATABASE_URL=... for a real database)
 
 cd admin-dashboard
 npm install
@@ -178,7 +176,7 @@ nirman-mitra/
   │   ├── providers/            # llm.js (Nodus → Groq), stt.js (Nodus → Scribe → Groq), tts.js (ElevenLabs)
   │   ├── middleware/auth.js    # JWT verification for the admin API
   │   ├── stepFunctions/        # AWS Step Functions state machine definitions (ASL)
-  │   └── utils/                # Config, DynamoDB, S3, WhatsApp client, helpers
+  │   └── utils/                # Config, data helpers (Postgres/DynamoDB), file storage, WhatsApp client
   └── admin-dashboard/          # React + Vite admin dashboard and verify page
 ```
 

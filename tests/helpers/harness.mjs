@@ -118,7 +118,7 @@ globalThis.fetch = async (url, opts) => {
 
 // ---------- DynamoDB in-memory with real key schemas ----------
 const SCHEMA = {
-  Workers: { pk: 'worker_id', idx: { PhoneNumberIndex: ['phone_number'] } },
+  Workers: { pk: 'worker_id', idx: { PhoneNumberIndex: ['phone_number'], ReminderIndex: ['profile_status', 'next_reminder_time'] } },
   AttendanceLogs: { pk: 'worker_id', sk: 'log_date', idx: { SiteLogsIndex: ['site_id', 'log_date'], ReviewQueueIndex: ['verification_status', 'timestamp'] } },
   Sites: { pk: 'site_id', idx: { ActiveSitesIndex: ['is_active'] } },
   Certificates: { pk: 'worker_id', sk: 'certificate_id', idx: { VerificationHashIndex: ['verification_hash'], CertificateIdIndex: ['certificate_id'] } },

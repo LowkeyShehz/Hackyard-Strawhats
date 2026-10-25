@@ -1,22 +1,88 @@
 /**
  * Nirman Mitra — Document OCR Service
- * Textract OCR + name cross-validation for identity documents.
- * Aadhaar OCR, bank passbook OCR, name cross-validation.
+ * OCR + name cross-validation for identity documents: Aadhaar OCR, bank passbook OCR, name
+ * cross-validation. config.ocrProvider picks the engine: 'textract' (AWS, form key-value pairs)
+ * or 'tesseract' (tesseract.js in-process, English + Hindi; key-value pairs come from
+ * "Key: value" lines). Both feed the same field extraction below.
  */
 
+import fs from 'fs/promises';
+import path from 'path';
 import { TextractClient, AnalyzeDocumentCommand } from '@aws-sdk/client-textract';
 import config, { isDemoMode } from '../utils/config.js';
 import { withRetry } from '../utils/retryHelper.js';
 
 const IS_DEMO = isDemoMode();
-const textractClient = IS_DEMO ? null : new TextractClient({ region: config.aws.region });
+const USE_TESSERACT = config.ocrProvider === 'tesseract';
+const textractClient = IS_DEMO || USE_TESSERACT ? null : new TextractClient({ region: config.aws.region });
+
+// ─────────────────────────────────────────────────────────
+// OCR engines
+// ─────────────────────────────────────────────────────────
+
+let tesseractWorker = null;
+
+/** One tesseract.js worker per process (English + Hindi, as printed on Aadhaar cards) */
+async function defaultTesseractRecognize(imageBuffer) {
+  if (!tesseractWorker) {
+    tesseractWorker = (async () => {
+      const { createWorker } = await import('tesseract.js');
+      // Language data downloads once, then is cached next to the stored files (the Render disk).
+      // tesseract.js does not create the folder and skips caching silently without it.
+      const cachePath = path.join(config.storage.dir, 'tessdata');
+      await fs.mkdir(cachePath, { recursive: true });
+      return createWorker(['eng', 'hin'], 1, { cachePath });
+    })().catch((err) => { tesseractWorker = null; throw err; });
+  }
+  const worker = await tesseractWorker;
+  const { data } = await worker.recognize(imageBuffer);
+  return { text: data.text || '', confidence: data.confidence || 0 };
+}
+
+/** Tesseract recogniser: (imageBuffer) => { text, confidence }. Replaceable in tests. */
+export const tesseract = { recognize: defaultTesseractRecognize };
+
+/**
+ * Read a document image with the configured OCR engine.
+ * @returns {Promise<{kvPairs: {key: string, value: string}[], allText: string, confidence: number}>}
+ */
+async function readDocument(imageBuffer, label) {
+  if (USE_TESSERACT) {
+    const { text, confidence } = await withRetry(() => tesseract.recognize(imageBuffer), { label: `Tesseract:${label}` });
+    const allText = text.split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
+    return { kvPairs: kvPairsFromLines(allText), allText, confidence: Math.round(confidence) };
+  }
+
+  const textractResult = await withRetry(
+    () => textractClient.send(
+      new AnalyzeDocumentCommand({
+        Document: { Bytes: imageBuffer },
+        FeatureTypes: ['FORMS'],
+      }),
+    ),
+    { label: `Textract:${label}` },
+  );
+  return {
+    kvPairs: parseTextractForms(textractResult),
+    allText: extractAllText(textractResult),
+    confidence: calculateAverageConfidence(textractResult),
+  };
+}
+
+/** "Key: value" lines as key-value pairs (what Textract FORMS returns, for plain OCR text) */
+function kvPairsFromLines(text) {
+  return text.split('\n')
+    .map((line) => line.match(/^([^:：]{2,40})[:：]\s*(.+)$/))
+    .filter(Boolean)
+    .map(([, key, value]) => ({ key: key.toLowerCase().trim(), value: value.trim() }));
+}
 
 // ─────────────────────────────────────────────────────────
 // Aadhaar OCR
 // ─────────────────────────────────────────────────────────
 
 /**
- * Extract fields from an Aadhaar card image using Textract
+ * Extract fields from an Aadhaar card image
  * @param {Buffer} imageBuffer - JPEG/PNG image buffer
  * @returns {Promise<{name: string, dob: string, aadhaar_number: string, address: string, gender: string, confidence: number}>}
  */
@@ -29,19 +95,7 @@ export async function extractAadhaarFields(imageBuffer) {
     };
   }
 
-  const textractResult = await withRetry(
-    () => textractClient.send(
-      new AnalyzeDocumentCommand({
-        Document: { Bytes: imageBuffer },
-        FeatureTypes: ['FORMS'],
-      }),
-    ),
-    { label: 'Textract:Aadhaar' },
-  );
-
-  // Parse Textract FORMS response to extract key-value pairs
-  const kvPairs = parseTextractForms(textractResult);
-  const allText = extractAllText(textractResult);
+  const { kvPairs, allText, confidence } = await readDocument(imageBuffer, 'Aadhaar');
 
   // Extract specific Aadhaar fields
   const fields = {
@@ -50,7 +104,7 @@ export async function extractAadhaarFields(imageBuffer) {
     aadhaar_number: extractAadhaarNumber(allText),
     address: truncateBeforeAadhaarNumber(findFieldValue(kvPairs, ['address', 'पता']) || extractAddressFromText(allText)),
     gender: findFieldValue(kvPairs, ['gender', 'sex', 'लिंग']) || extractGenderFromText(allText),
-    confidence: calculateAverageConfidence(textractResult),
+    confidence,
   };
 
   return fields;
@@ -61,7 +115,7 @@ export async function extractAadhaarFields(imageBuffer) {
 // ─────────────────────────────────────────────────────────
 
 /**
- * Extract fields from a bank passbook image using Textract
+ * Extract fields from a bank passbook image
  * @param {Buffer} imageBuffer
  * @returns {Promise<{account_holder_name: string, account_number: string, ifsc_code: string, bank_name: string, confidence: number}>}
  */
@@ -74,25 +128,14 @@ export async function extractBankFields(imageBuffer) {
     };
   }
 
-  const textractResult = await withRetry(
-    () => textractClient.send(
-      new AnalyzeDocumentCommand({
-        Document: { Bytes: imageBuffer },
-        FeatureTypes: ['FORMS'],
-      }),
-    ),
-    { label: 'Textract:BankPassbook' },
-  );
-
-  const kvPairs = parseTextractForms(textractResult);
-  const allText = extractAllText(textractResult);
+  const { kvPairs, allText, confidence } = await readDocument(imageBuffer, 'BankPassbook');
 
   const fields = {
     account_holder_name: findFieldValue(kvPairs, ['name', 'account holder', 'holder name', 'customer name']) || '',
     account_number: findFieldValue(kvPairs, ['account', 'a/c', 'account no', 'account number']) || extractAccountNumber(allText),
     ifsc_code: findFieldValue(kvPairs, ['ifsc', 'ifsc code', 'branch code']) || extractIfscCode(allText),
     bank_name: findFieldValue(kvPairs, ['bank', 'bank name']) || extractBankName(allText),
-    confidence: calculateAverageConfidence(textractResult),
+    confidence,
   };
 
   return fields;
@@ -153,8 +196,8 @@ export function verhoeffChecksum(aadhaarNumber) {
 
 /**
  * Assess document image quality for OCR readability
- * Uses Textract confidence as a proxy for image quality.
- * Textract errors are thrown, not scored as 0: a service outage is not an unclear photo.
+ * Uses OCR confidence as a proxy for image quality.
+ * OCR errors are thrown, not scored as 0: a service outage is not an unclear photo.
  * @param {Buffer} imageBuffer
  * @returns {Promise<number>} Quality score 0-100
  */
@@ -164,16 +207,7 @@ export async function assessDocumentQuality(imageBuffer) {
     return 85;
   }
 
-  const result = await withRetry(
-    () => textractClient.send(
-      new AnalyzeDocumentCommand({
-        Document: { Bytes: imageBuffer },
-        FeatureTypes: ['FORMS'],
-      }),
-    ),
-    { label: 'Textract:QualityAssess' },
-  );
-  return calculateAverageConfidence(result);
+  return (await readDocument(imageBuffer, 'QualityAssess')).confidence;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -365,18 +399,12 @@ function extractDobFromText(text) {
 /** Extract name from Aadhaar text (heuristic: line after "Government of India") */
 function extractNameFromText(text) {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].toLowerCase().includes('government of india') || lines[i].toLowerCase().includes('भारत सरकार')) {
-      // Name is typically 1-2 lines after the header
-      if (lines[i + 1] && /^[a-zA-Z\s.]+$/.test(lines[i + 1])) {
-        return lines[i + 1];
-      }
-      if (lines[i + 2] && /^[a-zA-Z\s.]+$/.test(lines[i + 2])) {
-        return lines[i + 2];
-      }
-    }
-  }
-  return '';
+  const isHeader = (line) => line.toLowerCase().includes('government of india') || line.includes('भारत सरकार');
+  // Cards print both headers (Hindi, then English); the name follows the last of them
+  const header = lines.findLastIndex(isHeader);
+  if (header === -1) return '';
+  // The English name is typically 1-2 lines after the header (a Hindi name line may come first)
+  return lines.slice(header + 1, header + 3).find((line) => /^[a-zA-Z\s.]+$/.test(line)) || '';
 }
 
 /** Extract address from text (heuristic: lines after "Address:" or "पता:") */

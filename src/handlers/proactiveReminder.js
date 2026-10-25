@@ -22,7 +22,7 @@ export const handler = async (event) => {
       config.tables.workers,
       '#st = :active AND next_reminder_time <= :now',
       {
-        ':active': 'ACTIVE',
+        ':active': 'active',
         ':now': currentIsoTime,
       },
       'ReminderIndex',

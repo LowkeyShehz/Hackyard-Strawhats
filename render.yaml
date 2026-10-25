@@ -1,18 +1,33 @@
 # Nirman Mitra on Render (Blueprint). Every service deploys from main once GitHub CI
-# (.github/workflows/ci.yml) passes. Data stays on AWS: DynamoDB, S3 and the AI services
-# (Rekognition, Textract, Polly), reached with the RenderRuntimeUser key from template.yaml.
+# (.github/workflows/ci.yml) passes.
+#   Data:   Render Postgres (DB_BACKEND=postgres, src/utils/postgres.js)
+#   Files:  the API's Render disk, served as signed /files/ links (STORAGE_BACKEND=disk)
+#   OCR:    Tesseract in the API process (OCR_PROVIDER=tesseract)
+#   Voice:  ElevenLabs only (TTS_FALLBACK=none)
+# The one AWS service left is Rekognition face matching, reached with an IAM key (AWS_* below)
+# until face matching moves to the Nodus FaceNet embeddings.
 #
 # Values marked `sync: false` are secrets: Render asks for them when the Blueprint is first
 # applied, and they are then edited in the dashboard, never here.
 
+databases:
+  - name: nirman-mitra-db
+    databaseName: nirman_mitra
+    user: nirman
+    region: singapore
+    plan: 0.1c-256mb
+
 envVarGroups:
-  # Non-secret settings shared by the API and the reminder job. Table names match template.yaml.
+  # Non-secret settings shared by the API and the reminder job. Table names match template.yaml;
+  # on Postgres they are the `tbl` value of each row.
   - name: nirman-mitra-backend
     envVars:
       - key: NODE_VERSION
         value: '22'
       - key: ENVIRONMENT
         value: dev
+      - key: DB_BACKEND
+        value: postgres
       - key: AWS_REGION
         value: ap-south-1
       - key: WORKERS_TABLE
@@ -42,13 +57,19 @@ services:
     name: nirman-mitra-api
     runtime: node
     region: singapore
-    plan: starter
+    plan: 0.5c-512mb
     buildCommand: npm ci --omit=dev
     startCommand: node src/server.js
     healthCheckPath: /health
     autoDeployTrigger: checksPass
     # Webhook messages are processed after the 200; give in-flight ones time to finish on deploy
     maxShutdownDelaySeconds: 120
+    # Worker media, certificates, cached voice replies and the Tesseract language data. A disk
+    # pins the API to one instance, and deploys briefly stop it (no zero-downtime deploys).
+    disk:
+      name: nirman-files
+      mountPath: /var/data
+      sizeGB: 1
     buildFilter:
       paths:
         - src/**
@@ -56,6 +77,21 @@ services:
         - package-lock.json
     envVars:
       - fromGroup: nirman-mitra-backend
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nirman-mitra-db
+          property: connectionString
+      - key: STORAGE_BACKEND
+        value: disk
+      - key: STORAGE_DIR
+        value: /var/data/files
+      # Signs the expiring /files/ links (WhatsApp fetches voice notes and certificates by URL)
+      - key: FILE_URL_SECRET
+        generateValue: true
+      - key: OCR_PROVIDER
+        value: tesseract
+      - key: TTS_FALLBACK
+        value: none
       - key: BACKGROUND_WEBHOOK
         value: 'true'
       - key: CERTIFICATE_THRESHOLD
@@ -70,13 +106,8 @@ services:
         value: nodus
       - key: LLM_MODEL
         value: nodus/gpt-oss-120b
-      # Bucket names end in the AWS account id: copy them from the SAM stack outputs
-      - key: MEDIA_RAW_BUCKET
-        sync: false
-      - key: MEDIA_PROCESSED_BUCKET
-        sync: false
-      - key: CERTIFICATES_BUCKET
-        sync: false
+      # IAM key for Rekognition face matching only (rekognition:CompareFaces, IndexFaces,
+      # DeleteFaces, CreateCollection)
       - key: AWS_ACCESS_KEY_ID
         sync: false
       - key: AWS_SECRET_ACCESS_KEY
@@ -101,6 +132,7 @@ services:
         sync: false
       - key: ELEVENLABS_API_KEY
         sync: false
+      # {"en":"<voice id>","hi":"<voice id>"}; other languages get text-only replies
       - key: ELEVENLABS_VOICE_IDS
         sync: false
       # https://nirman-fraud-bridge.onrender.com (or empty to skip the selfie fraud check)
@@ -137,12 +169,12 @@ services:
         - package-lock.json
     envVars:
       - fromGroup: nirman-mitra-backend
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nirman-mitra-db
+          property: connectionString
       - key: WHATSAPP_REMINDER_TEMPLATE_NAME
         value: daily_checkin_reminder
-      - key: AWS_ACCESS_KEY_ID
-        sync: false
-      - key: AWS_SECRET_ACCESS_KEY
-        sync: false
       - key: WHATSAPP_API_TOKEN
         sync: false
       - key: WHATSAPP_PHONE_NUMBER_ID
@@ -153,7 +185,7 @@ services:
     name: nirman-fraud-bridge
     runtime: python
     region: singapore
-    plan: starter
+    plan: 0.5c-512mb
     rootDir: nodus
     buildCommand: pip install -r requirements-bridge.txt
     startCommand: uvicorn bridge:app --host 0.0.0.0 --port $PORT

@@ -33,3 +33,6 @@ __pycache__/
 .venv/
 nodus/outputs/
 agents/agent37/outputs/
+
+# Local file storage (STORAGE_BACKEND=disk): worker media, certificates, OCR language data
+data/files/
