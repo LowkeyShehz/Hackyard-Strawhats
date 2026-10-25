@@ -2,7 +2,7 @@
 # (.github/workflows/ci.yml) passes.
 #   Data:   Render Postgres (DB_BACKEND=postgres, src/utils/postgres.js)
 #   Files:  the API's Render disk, served as signed /files/ links (STORAGE_BACKEND=disk)
-#   OCR:    Tesseract in the API process (OCR_PROVIDER=tesseract)
+#   OCR:    RapidOCR on the bridge (OCR_PROVIDER=bridge), Tesseract in the API as the fallback
 #   Voice:  ElevenLabs only (TTS_FALLBACK=none)
 #   Faces:  OpenCV SFace on the face + fraud bridge (FACE_PROVIDER=bridge). No AWS anywhere.
 #   AI:     Groq until NODUS_API_KEY is set; then LLM, speech-to-text, faces and fraud checks
@@ -90,7 +90,7 @@ services:
       - key: FILE_URL_SECRET
         generateValue: true
       - key: OCR_PROVIDER
-        value: tesseract
+        value: bridge
       - key: TTS_FALLBACK
         value: none
       - key: BACKGROUND_WEBHOOK
@@ -185,7 +185,7 @@ services:
     plan: 0.5c-512mb
     rootDir: nodus
     # Fetches the YuNet + SFace face models (~38 MB) into nodus/models at build time
-    buildCommand: pip install -r requirements-bridge.txt && python -c "import face; face.ensure_models()"
+    buildCommand: pip install -r requirements-bridge.txt && pip install --no-deps rapidocr-onnxruntime && python -c "import face; face.ensure_models()"
     startCommand: uvicorn bridge:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: checksPass

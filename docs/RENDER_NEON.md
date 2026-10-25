@@ -17,7 +17,7 @@ on a Neon pooled connection and `STORAGE_BACKEND=s3` on Neon storage.
 
 ## Render: face bridge (Web Service, Python)
 - Root directory `nodus`
-- Build `pip install -r requirements-bridge.txt && python -c "import face; face.ensure_models()"`
+- Build `pip install -r requirements-bridge.txt && pip install --no-deps rapidocr-onnxruntime && python -c "import face; face.ensure_models()"`
 - Start `uvicorn bridge:app --host 0.0.0.0 --port $PORT`
 - Health check `/health`
 - Env: `PYTHON_VERSION=3.12.7`, `FRAUD_SERVICE_TOKEN=<random>`
@@ -38,7 +38,7 @@ on a Neon pooled connection and `STORAGE_BACKEND=s3` on Neon storage.
   AWS_ACCESS_KEY_ID=<Neon key id>
   AWS_SECRET_ACCESS_KEY=<Neon secret>
   AWS_REGION=ap-southeast-1
-  OCR_PROVIDER=tesseract
+  OCR_PROVIDER=bridge
   TTS_FALLBACK=none
   BACKGROUND_WEBHOOK=true
   CERTIFICATE_THRESHOLD=3

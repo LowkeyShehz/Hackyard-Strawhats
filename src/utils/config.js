@@ -47,7 +47,8 @@ const config = Object.freeze({
     urlSecret: process.env.FILE_URL_SECRET || (HOSTED ? '' : 'dev-file-url-secret'),
   },
 
-  // Document OCR at onboarding: 'tesseract' (in-process) or 'textract' (AWS)
+  // Document OCR at onboarding: 'bridge' (RapidOCR on the face + fraud bridge; falls back to
+  // tesseract), 'tesseract' (in-process) or 'textract' (AWS)
   ocrProvider: process.env.OCR_PROVIDER || 'textract',
 
   // Process webhook messages in a separate async invocation (set in template.yaml; only on Lambda)

@@ -63,7 +63,7 @@ export const transcribe = { text: 'aaj maine teesri manzil pe plaster kiya', fai
 // Nodus and ElevenLabs speech-to-text: each call is recorded; failProviders makes one return 500
 export const stt = { calls: [], failProviders: new Set() };
 // Nodus fraud service (nodus/bridge.py): respond() builds the analyze_selfie result
-export const fraud = { calls: [], fail: false, faceCalls: [], faceFail: false, face: { problem: null, found: true, similarity: 95 }, respond: () => ({ phash: 'ab12', embedding: 'AAA=', face_embedding: 'BBB=', recapture_score: 0.1, near_duplicate: null, flags: [], backend: 'local' }) };
+export const fraud = { calls: [], fail: false, faceCalls: [], faceFail: false, ocrCalls: [], ocrFail: false, ocrText: '', ocrConfidence: 90, face: { problem: null, found: true, similarity: 95 }, respond: () => ({ phash: 'ab12', embedding: 'AAA=', face_embedding: 'BBB=', recapture_score: 0.1, near_duplicate: null, flags: [], backend: 'local' }) };
 // ElevenLabs text-to-speech: each call is recorded as { voiceId, body }
 export const elevenTts = { calls: [], fail: false };
 const realFetch = globalThis.fetch;
@@ -80,6 +80,12 @@ globalThis.fetch = async (url, opts) => {
   }
   const sttProvider = url.includes('inference.nodus-compute.ai/v1/audio/transcriptions') ? 'nodus'
     : url.includes('api.elevenlabs.io/v1/speech-to-text') ? 'elevenlabs' : null;
+  // Face bridge: /ocr (RapidOCR)
+  if (url === 'https://fraud.test/ocr') {
+    fraud.ocrCalls.push({ headers: opts.headers });
+    if (fraud.ocrFail) return new Response('down', { status: 503 });
+    return new Response(JSON.stringify({ text: fraud.ocrText, confidence: fraud.ocrConfidence, lines: [], backend: 'local' }), { status: 200 });
+  }
   // Face bridge: /face-embed and /face-match (SFace)
   if (url.startsWith('https://fraud.test/face-')) {
     const body = JSON.parse(opts.body);

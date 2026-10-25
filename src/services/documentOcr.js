@@ -1,11 +1,14 @@
 /**
  * Nirman Mitra — Document OCR Service
  * OCR + name cross-validation for identity documents: Aadhaar OCR, bank passbook OCR, name
- * cross-validation. config.ocrProvider picks the engine: 'textract' (AWS, form key-value pairs)
- * or 'tesseract' (tesseract.js in-process, English + Hindi; key-value pairs come from
- * "Key: value" lines). Both feed the same field extraction below.
+ * cross-validation. config.ocrProvider picks the engine: 'bridge' (RapidOCR on the face + fraud
+ * bridge, which reads cards far better; falls back to tesseract when the bridge fails),
+ * 'tesseract' (tesseract.js in-process, English + Hindi) or 'textract' (AWS, form key-value
+ * pairs). Plain-text engines get key-value pairs from "Key: value" lines; all feed the same
+ * field extraction below. Card images go only to the bridge, which is our own server.
  */
 
+import { createHash } from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import { TextractClient, AnalyzeDocumentCommand } from '@aws-sdk/client-textract';
@@ -13,7 +16,8 @@ import config, { isDemoMode } from '../utils/config.js';
 import { withRetry } from '../utils/retryHelper.js';
 
 const IS_DEMO = isDemoMode();
-const USE_TESSERACT = config.ocrProvider === 'tesseract';
+const USE_BRIDGE = config.ocrProvider === 'bridge';
+const USE_TESSERACT = config.ocrProvider === 'tesseract' || USE_BRIDGE;
 const textractClient = IS_DEMO || USE_TESSERACT ? null : new TextractClient({ region: config.aws.region });
 
 // ─────────────────────────────────────────────────────────
@@ -42,13 +46,56 @@ async function defaultTesseractRecognize(imageBuffer) {
 /** Tesseract recogniser: (imageBuffer) => { text, confidence }. Replaceable in tests. */
 export const tesseract = { recognize: defaultTesseractRecognize };
 
+const OCR_BRIDGE_TIMEOUT_MS = 60000;
+
+/** RapidOCR on the face + fraud bridge: (imageBuffer) => { text, confidence }. Replaceable in tests. */
+async function bridgeRecognise(imageBuffer) {
+  const res = await fetch(`${config.fraud.serviceUrl}/ocr`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.fraud.serviceToken}` },
+    body: JSON.stringify({ image_b64: imageBuffer.toString('base64') }),
+    signal: AbortSignal.timeout(OCR_BRIDGE_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`OCR bridge HTTP ${res.status}`);
+  const data = await res.json();
+  return { text: data.text || '', confidence: data.confidence || 0 };
+}
+
+// The same card is read twice per upload (quality check, then field extraction); on the bridge
+// that is two slow round trips, so keep the last few results in memory for a minute. Text only,
+// never the image.
+const RECENT_TTL_MS = 60000;
+const recentReads = new Map();
+
+async function recogniseOnce(imageBuffer, label) {
+  const key = USE_BRIDGE ? createHash('sha256').update(imageBuffer).digest('hex') : null;
+  const hit = key && recentReads.get(key);
+  if (hit && Date.now() - hit.at < RECENT_TTL_MS) return hit.result;
+
+  let result;
+  if (USE_BRIDGE) {
+    try {
+      result = await withRetry(() => bridgeRecognise(imageBuffer), { label: `OCRBridge:${label}`, maxRetries: 1 });
+    } catch (err) {
+      console.warn(`[DocumentOCR] Bridge OCR failed, using Tesseract: ${err.message}`);
+    }
+  }
+  result ??= await withRetry(() => tesseract.recognize(imageBuffer), { label: `Tesseract:${label}` });
+
+  if (key) {
+    recentReads.set(key, { at: Date.now(), result });
+    for (const [k, v] of recentReads) if (Date.now() - v.at >= RECENT_TTL_MS || recentReads.size > 8) recentReads.delete(k);
+  }
+  return result;
+}
+
 /**
  * Read a document image with the configured OCR engine.
  * @returns {Promise<{kvPairs: {key: string, value: string}[], allText: string, confidence: number}>}
  */
 async function readDocument(imageBuffer, label) {
   if (USE_TESSERACT) {
-    const { text, confidence } = await withRetry(() => tesseract.recognize(imageBuffer), { label: `Tesseract:${label}` });
+    const { text, confidence } = await recogniseOnce(imageBuffer, label);
     const allText = text.split('\n').map((l) => l.trim()).filter(Boolean).join('\n');
     return { kvPairs: kvPairsFromLines(allText), allText, confidence: Math.round(confidence) };
   }
@@ -393,20 +440,40 @@ function truncateBeforeAadhaarNumber(text) {
 
 /** Extract date of birth from text */
 function extractDobFromText(text) {
-  // Common formats: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
-  const match = text.match(/\b(\d{2}[/\-.]\d{2}[/\-.]\d{4})\b/);
-  return match ? match[1] : '';
+  // Common formats: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY. A date next to a DOB label wins (OCR
+  // often reads the O as a zero); otherwise the first date on a line that is not an issue date,
+  // since the card also prints "Aadhaar No. Issued: 15/12/2011".
+  const date = '(\\d{2}[/\\-.]\\d{2}[/\\-.]\\d{4})';
+  const labelled = text.match(new RegExp(`(?:D[O0]B|date of birth)\\s*[:：]?\\s*${date}`, 'i'));
+  if (labelled) return labelled[1];
+  for (const line of text.split('\n')) {
+    const match = line.match(/\b(\d{2}[/\-.]\d{2}[/\-.]\d{4})\b/);
+    if (match && !/issue/i.test(line)) return match[1];
+  }
+  return '';
 }
 
 /** Extract name from Aadhaar text (heuristic: line after "Government of India") */
 function extractNameFromText(text) {
   const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
   const isHeader = (line) => line.toLowerCase().includes('government of india') || line.includes('भारत सरकार');
+  const isEnglishName = (line) => /^[a-zA-Z\s.]+$/.test(line);
   // Cards print both headers (Hindi, then English); the name follows the last of them
   const header = lines.findLastIndex(isHeader);
-  if (header === -1) return '';
   // The English name is typically 1-2 lines after the header (a Hindi name line may come first)
-  return lines.slice(header + 1, header + 3).find((line) => /^[a-zA-Z\s.]+$/.test(line)) || '';
+  const afterHeader = header === -1 ? '' : lines.slice(header + 1, header + 3).find(isEnglishName);
+  return afterHeader || nameFromAnyLine(lines);
+}
+
+// Words that appear on a card but are never a name
+const NOT_A_NAME = /government|india|aadhaar|aadhar|authentication|verification|citizenship|birth|proof|identity|identification|authority|unique|male|female|address|\bdob\b|year|download|issued|enrol|\bvid\b|\bqr\b|\bxml\b|code|offline|online|scanning|should|only|\bwith\b|\bnot\b|\bor\b|\bof\b|\bis\b|\bto\b/i;
+
+/**
+ * Fallback for OCR engines that return lines in photo order (a sideways card puts the name after
+ * the date of birth): the first short letters-only line that has no card wording in it.
+ */
+function nameFromAnyLine(lines) {
+  return lines.find((line) => /^[A-Za-z][A-Za-z .]{2,39}$/.test(line) && !NOT_A_NAME.test(line) && line.replace(/[^A-Za-z]/g, '').length >= 3) || '';
 }
 
 /** Extract address from text (heuristic: lines after "Address:" or "पता:") */
